@@ -10,30 +10,40 @@ import websockets
 SYSTEM = """
 You are answering a technical job interview question as the candidate.
 
-Use only facts supported by CANDIDATE EVIDENCE.
-Never invent employers, dates, metrics, responsibilities,
-projects, tools, technologies, or outcomes.
+Use only facts supported by CANDIDATE EVIDENCE when the question asks
+about my experience, employers, projects, responsibilities, dates,
+metrics, tools I used, or outcomes.
 
-Answer in first person.
+For general technical questions, answer directly using accurate
+technical knowledge. Do not require candidate evidence for general
+concepts such as GCP, BigQuery, Snowflake, Dataflow, Dataproc, dbt,
+SQL, ETL, data modeling, networking, or cloud architecture.
+
+Answer naturally in first person when appropriate.
 
 Give the direct answer immediately.
-Keep the answer concise and natural for speaking in an interview.
 
-Preferred structure:
-1. Direct answer
-2. Brief technical explanation
-3. One relevant example from my experience only if evidence supports it
+Keep the answer concise enough for smart glasses:
+usually 3 to 5 short lines.
 
-Target approximately 3 to 5 short lines.
-Avoid introductions such as "Sure" or "Certainly".
-Avoid coaching language.
-Avoid saying "based on the provided evidence".
+For comparison questions:
+- state the main difference first
+- give the important technical distinction
+- give a practical use case if useful
 
-If the question is general technical knowledge and does not
-require personal experience, answer the technical question directly.
+For experience questions:
+- use only the supplied candidate evidence
+- never invent experience, employers, projects, dates, metrics,
+  responsibilities, or outcomes
 
-If personal experience is required but the evidence is insufficient,
-say only what can truthfully be supported.
+Do not start with:
+"Sure"
+"Certainly"
+"Of course"
+"Based on the provided evidence"
+
+Do not provide interview coaching.
+Just answer the interviewer.
 """.strip()
 
 
@@ -49,17 +59,11 @@ async def answer_stream(
 
     model = os.getenv(
         "OPENAI_MODEL",
-        "gpt-5.6-luna",
+        "gpt-5-mini",
     )
 
     payload = {
         "model": model,
-
-        # Disable reasoning for interview-speed responses.
-        "reasoning": {
-            "effort": "none",
-        },
-
         "stream": True,
 
         "input": [
@@ -78,9 +82,15 @@ async def answer_stream(
             },
         ],
 
-        # Smart-glasses answer should stay short.
         "max_output_tokens": 180,
     }
+
+    # Only add reasoning configuration for models
+    # where the account/model supports it.
+    if model.startswith("gpt-5"):
+        payload["reasoning"] = {
+            "effort": "minimal"
+        }
 
     timeout = httpx.Timeout(
         connect=10.0,
@@ -120,10 +130,8 @@ async def answer_stream(
                 except json.JSONDecodeError:
                     continue
 
-                event_type = event.get("type")
-
                 if (
-                    event_type
+                    event.get("type")
                     == "response.output_text.delta"
                 ):
                     delta = event.get(
@@ -140,7 +148,6 @@ async def answer_stream(
 # ============================================================
 
 async def openai_transcription_session():
-
     key = os.environ["OPENAI_API_KEY"]
 
     url = (
@@ -154,13 +161,8 @@ async def openai_transcription_session():
         additional_headers={
             "Authorization": f"Bearer {key}",
         },
-
-        # Keep OpenAI websocket healthy.
         ping_interval=10,
         ping_timeout=10,
-
-        # Prevent unnecessary connection closure
-        # during short network delays.
         close_timeout=5,
     )
 
@@ -168,277 +170,55 @@ async def openai_transcription_session():
         "type": "session.update",
 
         "session": {
-
-            # We are using a normal realtime session
-            # with input transcription enabled.
             "type": "realtime",
 
-            # No OpenAI voice response is required.
             "output_modalities": [
                 "text"
             ],
 
             "audio": {
-
                 "input": {
 
-                    # main.py converts the G2 microphone
-                    # from 16 kHz PCM to 24 kHz PCM.
+                    # main.py receives Even G2 PCM16 at 16 kHz
+                    # and resamples it to 24 kHz before sending.
                     "format": {
                         "type": "audio/pcm",
                         "rate": 24000,
                     },
 
-                    # G2 glasses behave more like a
-                    # far-field microphone than a headset mic.
                     "noise_reduction": {
                         "type": "far_field",
                     },
 
-                    # ------------------------------------------------
-                    # TRANSCRIPTION
-                    # ------------------------------------------------
-
+                    # IMPORTANT:
+                    # There is deliberately NO transcription
+                    # prompt here. The previous prompt was
+                    # occasionally hallucinated as spoken text.
                     "transcription": {
-
                         "model":
                             "gpt-4o-mini-transcribe",
 
-                        # Explicit language improves transcription
-                        # accuracy and latency.
-                        "language": "en",
-
-                        # IMPORTANT:
-                        # Do NOT include a prompt here.
-                        #
-                        # Your previous prompt occasionally appeared
-                        # as an actual transcript:
-                        #
-                        # "A professional job interview..."
-                        #
-                        # Removing it prevents that leakage.
+                        "language":
+                            "en",
                     },
 
-                    # ------------------------------------------------
-                    # VOICE ACTIVITY DETECTION
-                    # ------------------------------------------------
-
                     "turn_detection": {
-
                         "type":
                             "server_vad",
 
-                        # Slightly easier speech activation than 0.58.
                         "threshold":
                             0.50,
 
-                        # Preserve the beginning of speech.
                         "prefix_padding_ms":
-                            250,
+                            300,
 
-                        # Previous value = 650 ms.
-                        #
-                        # Reduce to 400 ms so the completed
-                        # transcription arrives sooner after
-                        # interviewer stops speaking.
+                        # Faster than the previous 650 ms,
+                        # while still allowing short pauses.
                         "silence_duration_ms":
-                            400,
+                            450,
 
-                        # We only want transcription.
-                        # Our Responses API call generates
-                        # the actual interview answer.
                         "create_response":
                             False,
-
-                        # Do not let the realtime model
-                        # interrupt anything automatically.
-                        "interrupt_response":
-                            False,
-                    },
-                }
-            },
-        },
-    }
-
-    await ws.send(
-        json.dumps(
-            session_update
-        )
-    )
-
-    return ws# ============================================================
-
-async def answer_stream(
-    question: str,
-    evidence: str,
-):
-    key = os.environ["OPENAI_API_KEY"]
-
-    payload = {
-        "model": os.getenv(
-            "OPENAI_MODEL",
-            "gpt-5-mini",
-        ),
-        "stream": True,
-        "input": [
-            {
-                "role": "system",
-                "content": SYSTEM,
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"QUESTION:\n"
-                    f"{question}\n\n"
-                    f"CANDIDATE EVIDENCE:\n"
-                    f"{evidence}"
-                ),
-            },
-        ],
-        "max_output_tokens": 260,
-    }
-
-    async with httpx.AsyncClient(
-        timeout=30
-    ) as client:
-
-        async with client.stream(
-            "POST",
-            "https://api.openai.com/v1/responses",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        ) as r:
-
-            r.raise_for_status()
-
-            async for line in r.aiter_lines():
-
-                if not line.startswith("data: "):
-                    continue
-
-                data = line[6:]
-
-                if data == "[DONE]":
-                    break
-
-                event = json.loads(data)
-
-                if (
-                    event.get("type")
-                    == "response.output_text.delta"
-                ):
-                    yield event.get(
-                        "delta",
-                        "",
-                    )
-
-
-# ============================================================
-# OPENAI REALTIME TRANSCRIPTION
-# ============================================================
-
-async def openai_transcription_session():
-
-    key = os.environ["OPENAI_API_KEY"]
-
-    # IMPORTANT:
-    # This is a REALTIME session.
-    #
-    # The previous version connected to a realtime model but
-    # tried to send:
-    #
-    #     "type": "transcription"
-    #
-    # which caused:
-    #
-    # "Passing a transcription session update to a realtime
-    #  session is not allowed."
-    #
-    # So we keep this as a realtime session and enable
-    # input transcription inside it.
-
-    url = (
-        "wss://api.openai.com/"
-        "v1/realtime"
-        "?model=gpt-realtime"
-    )
-
-    ws = await websockets.connect(
-        url,
-        additional_headers={
-            "Authorization": f"Bearer {key}",
-        },
-        ping_interval=10,
-        ping_timeout=10,
-    )
-
-    session_update = {
-        "type": "session.update",
-        "session": {
-
-            # Must match the realtime transport above.
-            "type": "realtime",
-
-            # We do not need OpenAI speech output.
-            "output_modalities": [
-                "text"
-            ],
-
-            "audio": {
-                "input": {
-
-                    # main.py converts G2's 16 kHz PCM
-                    # into 24 kHz PCM before sending here.
-                    "format": {
-                        "type": "audio/pcm",
-                        "rate": 24000,
-                    },
-
-                    "noise_reduction": {
-                        "type": "far_field",
-                    },
-
-                    # Speech -> text only.
-                    "transcription": {
-                        "model": "gpt-4o-mini-transcribe",
-
-                        "language": "en",
-
-                        "prompt": (
-                            "A professional job interview. "
-                            "Preserve technical product names, "
-                            "metrics, acronyms, company names, "
-                            "cloud platform names, database names, "
-                            "programming languages, data engineering "
-                            "terminology, SQL terminology, GCP, Azure, "
-                            "Snowflake, BigQuery, PySpark, Kafka, "
-                            "Dataflow, Dataproc, and other technical "
-                            "terms accurately."
-                        ),
-                    },
-
-                    # Automatically detect when interviewer
-                    # starts/stops speaking.
-                    #
-                    # main.py expects speech_started and a
-                    # completed transcription event, so this
-                    # is important.
-                    "turn_detection": {
-                        "type": "server_vad",
-
-                        "threshold": 0.58,
-
-                        "prefix_padding_ms": 300,
-
-                        "silence_duration_ms": 650,
-
-                        # We only want transcription here.
-                        # answer_stream() creates our interview
-                        # answer separately.
-                        "create_response": False,
                     },
                 }
             },
