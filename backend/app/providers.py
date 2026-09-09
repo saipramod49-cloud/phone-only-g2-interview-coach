@@ -19,7 +19,7 @@ async def answer_stream(question: str, evidence: str):
 
 async def openai_transcription_session():
     key=os.environ["OPENAI_API_KEY"]
-    url="wss://api.openai.com/v1/realtime?model=gpt-live-transcribe"
+    url="wss://api.openai.com/v1/realtime?model=gpt-realtime"
     ws=await websockets.connect(url,additional_headers={"Authorization":f"Bearer {key}"},ping_interval=10,ping_timeout=10)
     await ws.send(json.dumps({"type":"session.update","session":{"type":"transcription","audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"noise_reduction":{"type":"far_field"},"transcription":{"model":"gpt-live-transcribe","languages":["en"],"delay":"low","prompt":"A professional job interview. Preserve technical product names, metrics, acronyms, and company names."},"turn_detection":{"type":"server_vad","threshold":0.58,"prefix_padding_ms":300,"silence_duration_ms":650}}}}}))
     return ws
