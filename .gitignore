@@ -6,3 +6,5 @@ backend/data/
 backend/.venv/
 *.ehpk
 !outputs/*.ehpk
+
+.DS_Store
