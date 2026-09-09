@@ -40,7 +40,6 @@ async def answer_stream(
     question: str,
     evidence: str,
 ):
-
     key = os.environ["OPENAI_API_KEY"]
 
     payload = {
@@ -75,10 +74,8 @@ async def answer_stream(
             "POST",
             "https://api.openai.com/v1/responses",
             headers={
-                "Authorization":
-                    f"Bearer {key}",
-                "Content-Type":
-                    "application/json",
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
             },
             json=payload,
         ) as r:
@@ -87,9 +84,7 @@ async def answer_stream(
 
             async for line in r.aiter_lines():
 
-                if not line.startswith(
-                    "data: "
-                ):
+                if not line.startswith("data: "):
                     continue
 
                 data = line[6:]
@@ -101,10 +96,8 @@ async def answer_stream(
 
                 if (
                     event.get("type")
-                    ==
-                    "response.output_text.delta"
+                    == "response.output_text.delta"
                 ):
-
                     yield event.get(
                         "delta",
                         "",
@@ -112,14 +105,29 @@ async def answer_stream(
 
 
 # ============================================================
-# REALTIME TRANSCRIPTION
+# OPENAI REALTIME TRANSCRIPTION
 # ============================================================
 
 async def openai_transcription_session():
 
     key = os.environ["OPENAI_API_KEY"]
 
-    # Realtime transport model.
+    # IMPORTANT:
+    # This is a REALTIME session.
+    #
+    # The previous version connected to a realtime model but
+    # tried to send:
+    #
+    #     "type": "transcription"
+    #
+    # which caused:
+    #
+    # "Passing a transcription session update to a realtime
+    #  session is not allowed."
+    #
+    # So we keep this as a realtime session and enable
+    # input transcription inside it.
+
     url = (
         "wss://api.openai.com/"
         "v1/realtime"
@@ -129,61 +137,76 @@ async def openai_transcription_session():
     ws = await websockets.connect(
         url,
         additional_headers={
-            "Authorization":
-                f"Bearer {key}",
+            "Authorization": f"Bearer {key}",
         },
         ping_interval=10,
         ping_timeout=10,
     )
 
-    # IMPORTANT:
-    #
-    # gpt-live-transcribe is used as the transcription model.
-    #
-    # DO NOT add:
-    #
-    # "turn_detection": {...}
-    #
-    # because the API is currently rejecting turn detection
-    # for this transcription model.
-
     session_update = {
         "type": "session.update",
         "session": {
-            "type": "transcription",
+
+            # Must match the realtime transport above.
+            "type": "realtime",
+
+            # We do not need OpenAI speech output.
+            "output_modalities": [
+                "text"
+            ],
+
             "audio": {
                 "input": {
 
+                    # main.py converts G2's 16 kHz PCM
+                    # into 24 kHz PCM before sending here.
                     "format": {
-                        "type":
-                            "audio/pcm",
-                        "rate":
-                            24000,
+                        "type": "audio/pcm",
+                        "rate": 24000,
                     },
 
                     "noise_reduction": {
-                        "type":
-                            "far_field",
+                        "type": "far_field",
                     },
 
+                    # Speech -> text only.
                     "transcription": {
-                        "model":
-                            "gpt-live-transcribe",
+                        "model": "gpt-4o-mini-transcribe",
 
-                        "languages": [
-                            "en"
-                        ],
-
-                        "delay":
-                            "low",
+                        "language": "en",
 
                         "prompt": (
                             "A professional job interview. "
                             "Preserve technical product names, "
                             "metrics, acronyms, company names, "
                             "cloud platform names, database names, "
-                            "and engineering terminology."
+                            "programming languages, data engineering "
+                            "terminology, SQL terminology, GCP, Azure, "
+                            "Snowflake, BigQuery, PySpark, Kafka, "
+                            "Dataflow, Dataproc, and other technical "
+                            "terms accurately."
                         ),
+                    },
+
+                    # Automatically detect when interviewer
+                    # starts/stops speaking.
+                    #
+                    # main.py expects speech_started and a
+                    # completed transcription event, so this
+                    # is important.
+                    "turn_detection": {
+                        "type": "server_vad",
+
+                        "threshold": 0.58,
+
+                        "prefix_padding_ms": 300,
+
+                        "silence_duration_ms": 650,
+
+                        # We only want transcription here.
+                        # answer_stream() creates our interview
+                        # answer separately.
+                        "create_response": False,
                     },
                 }
             },
