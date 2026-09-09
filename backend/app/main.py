@@ -237,7 +237,6 @@ def delete_document(
 
 @app.websocket("/ws/glasses")
 async def glasses(ws: WebSocket):
-
     expected_token = os.getenv("APP_TOKEN")
     supplied_token = ws.query_params.get("token")
 
@@ -261,7 +260,6 @@ async def glasses(ws: WebSocket):
     rate_state = None
 
     try:
-
         # --------------------------------------------------
         # Load active interview profile
         # --------------------------------------------------
@@ -315,8 +313,6 @@ async def glasses(ws: WebSocket):
             flush=True,
         )
 
-        # Important:
-        # immediately tell G2 client that we are listening.
         await ws.send_json(
             {
                 "type": "state",
@@ -334,11 +330,9 @@ async def glasses(ws: WebSocket):
             question: str,
             stt_ms: float,
         ):
-
             t0 = time.perf_counter()
 
             try:
-
                 await ws.send_json(
                     {
                         "type": "state",
@@ -351,10 +345,6 @@ async def glasses(ws: WebSocket):
                     f"QUESTION: {question}",
                     flush=True,
                 )
-
-                # ------------------------------------------
-                # Candidate evidence retrieval
-                # ------------------------------------------
 
                 with connect() as db:
                     evidence = search(
@@ -377,10 +367,6 @@ async def glasses(ws: WebSocket):
                         "was uploaded."
                     )
 
-                # ------------------------------------------
-                # Stream answer
-                # ------------------------------------------
-
                 full = ""
                 first = None
 
@@ -391,7 +377,6 @@ async def glasses(ws: WebSocket):
                     question,
                     grounded,
                 ):
-
                     if first is None:
                         first = time.perf_counter()
 
@@ -406,9 +391,7 @@ async def glasses(ws: WebSocket):
                         {
                             "type": "answer.delta",
                             "text": delta,
-                            "first": (
-                                len(full) == len(delta)
-                            ),
+                            "first": len(full) == len(delta),
                             "answer_id": answer_id,
                             "seq": seq,
                         }
@@ -449,9 +432,7 @@ async def glasses(ws: WebSocket):
 
                 metrics = {
                     "stt_ms": round(stt_ms),
-                    "retrieval_ms": round(
-                        retrieval_ms
-                    ),
+                    "retrieval_ms": round(retrieval_ms),
                     "model_first_token_ms": round(
                         first_token_ms
                     ),
@@ -472,10 +453,6 @@ async def glasses(ws: WebSocket):
                     f"ANSWER COMPLETE: {metrics}",
                     flush=True,
                 )
-
-                # ------------------------------------------
-                # Save latency metrics
-                # ------------------------------------------
 
                 with connect() as db:
                     db.execute(
@@ -512,7 +489,6 @@ async def glasses(ws: WebSocket):
 
                     db.commit()
 
-                # Resume listening state
                 await ws.send_json(
                     {
                         "type": "state",
@@ -549,55 +525,39 @@ async def glasses(ws: WebSocket):
         # --------------------------------------------------
 
         async def receive_stt():
-
             nonlocal started
             nonlocal generate_task
 
             try:
-
                 async for raw in transcription:
-
                     msg = json.loads(raw)
-
                     event_type = msg.get("type")
 
-                    # --------------------------------------
-                    # OpenAI error
-                    # --------------------------------------
-
                     if event_type == "error":
-
                         print(
                             "OPENAI REALTIME ERROR:",
                             json.dumps(msg),
                             flush=True,
                         )
-
                         continue
-
-                    # --------------------------------------
-                    # Speech started
-                    # --------------------------------------
 
                     if (
                         event_type
                         == "input_audio_buffer.speech_started"
                     ):
-
                         started = time.perf_counter()
 
-                        await ws.send_json(
-                            {
-                                "type": "state",
-                                "state": "hearing speech",
-                            }
-                        )
+                        try:
+                            await ws.send_json(
+                                {
+                                    "type": "state",
+                                    "state": "hearing speech",
+                                }
+                            )
+                        except Exception:
+                            return
 
                         continue
-
-                    # --------------------------------------
-                    # Completed transcription
-                    # --------------------------------------
 
                     if (
                         event_type
@@ -621,21 +581,18 @@ async def glasses(ws: WebSocket):
                         flush=True,
                     )
 
-                    # --------------------------------------
-                    # Ignore statements that aren't questions
-                    # --------------------------------------
-
                     if not is_question(utterance):
-
-                        await ws.send_json(
-                            {
-                                "type": "state",
-                                "state": "listening",
-                            }
-                        )
+                        try:
+                            await ws.send_json(
+                                {
+                                    "type": "state",
+                                    "state": "listening",
+                                }
+                            )
+                        except Exception:
+                            return
 
                         started = time.perf_counter()
-
                         continue
 
                     stt_ms = (
@@ -643,7 +600,6 @@ async def glasses(ws: WebSocket):
                         - started
                     ) * 1000
 
-                    # Cancel previous unfinished answer
                     if (
                         generate_task
                         and
@@ -664,7 +620,6 @@ async def glasses(ws: WebSocket):
                 raise
 
             except Exception as e:
-
                 print(
                     "STT RECEIVE ERROR:",
                     repr(e),
@@ -682,7 +637,6 @@ async def glasses(ws: WebSocket):
         )
 
         def log_stt_result(task):
-
             try:
                 task.result()
 
@@ -701,23 +655,33 @@ async def glasses(ws: WebSocket):
         )
 
         # --------------------------------------------------
-        # Receive audio from Even G2 client
+        # Receive audio / control messages from Even G2
         # --------------------------------------------------
 
         while True:
-
             event = await ws.receive()
+
+            event_type = event.get("type")
+
+            # FastAPI returns a websocket.disconnect event
+            # before raising WebSocketDisconnect.
+            # Do not call receive() again after this.
+            if event_type == "websocket.disconnect":
+                print(
+                    "G2 DISCONNECT EVENT:",
+                    event.get("code"),
+                    flush=True,
+                )
+                break
 
             # ----------------------------------------------
             # Binary microphone audio
             # ----------------------------------------------
 
-            if event.get("bytes"):
+            audio_bytes = event.get("bytes")
 
-                audio_bytes = event["bytes"]
-
+            if audio_bytes:
                 try:
-
                     pcm24, rate_state = audioop.ratecv(
                         audio_bytes,
                         2,
@@ -743,44 +707,36 @@ async def glasses(ws: WebSocket):
                     )
 
                 except Exception as e:
-
                     print(
                         "AUDIO FORWARD ERROR:",
                         repr(e),
                         flush=True,
                     )
-
                     raise
+
+                continue
 
             # ----------------------------------------------
             # JSON messages from G2 client
             # ----------------------------------------------
 
-            elif event.get("text"):
+            text = event.get("text")
 
+            if text:
                 try:
-                    msg = json.loads(
-                        event["text"]
-                    )
+                    msg = json.loads(text)
 
                 except json.JSONDecodeError:
-
                     print(
                         "INVALID CLIENT JSON:",
-                        event["text"],
+                        text,
                         flush=True,
                     )
-
                     continue
 
                 msg_type = msg.get("type")
 
-                # ------------------------------------------
-                # Display acknowledgement
-                # ------------------------------------------
-
                 if msg_type == "display.ack":
-
                     key = (
                         msg.get("answer_id"),
                         msg.get("seq"),
@@ -792,7 +748,6 @@ async def glasses(ws: WebSocket):
                     )
 
                     if then:
-
                         acks.append(
                             (
                                 key[0],
@@ -811,12 +766,7 @@ async def glasses(ws: WebSocket):
                             )
                         )
 
-                # ------------------------------------------
-                # Optional ping support
-                # ------------------------------------------
-
                 elif msg_type == "ping":
-
                     await ws.send_json(
                         {
                             "type": "pong",
@@ -825,14 +775,12 @@ async def glasses(ws: WebSocket):
                     )
 
     except WebSocketDisconnect:
-
         print(
             "G2 CLIENT DISCONNECTED",
             flush=True,
         )
 
     except RuntimeError as e:
-
         print(
             "WEBSOCKET RUNTIME ERROR:",
             repr(e),
@@ -840,7 +788,6 @@ async def glasses(ws: WebSocket):
         )
 
     except Exception as e:
-
         print(
             "GLASSES WEBSOCKET ERROR:",
             repr(e),
@@ -858,7 +805,6 @@ async def glasses(ws: WebSocket):
             pass
 
     finally:
-
         # --------------------------------------------------
         # Cleanup
         # --------------------------------------------------
