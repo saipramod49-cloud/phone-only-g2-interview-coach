@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.local
+backend/data/
+backend/.venv/
+*.ehpk
+!outputs/*.ehpk

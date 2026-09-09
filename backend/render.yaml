@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: interview-lens
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: APP_TOKEN
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
+    disk:
+      name: interview-data
+      mountPath: /data
+      sizeGB: 1

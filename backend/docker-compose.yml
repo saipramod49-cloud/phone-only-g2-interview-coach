@@ -1,0 +1,9 @@
+services:
+  interview-lens:
+    build: .
+    ports: ["8080:8080"]
+    env_file: .env
+    volumes: ["interview-data:/data"]
+    restart: unless-stopped
+volumes:
+  interview-data:
