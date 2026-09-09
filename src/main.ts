@@ -1,40 +1,650 @@
 import {
   waitForEvenAppBridge,
-  CreateStartUpPageContainer,
   TextContainerProperty,
-  TextContainerUpgrade,
-  AudioInputSource,
 } from "@evenrealities/even_hub_sdk";
 
 import "./style.css";
-import { connectionUrl, glassesText } from "./format";
-import { parseMessage } from "./protocol";
 
-const STORAGE = "interviewlens.profile.v1";
+let bridge: any = null;
+let ws: WebSocket | null = null;
 
-type Profile = {
-  serviceUrl: string;
-  token: string;
-  selectedProfile?: string;
-};
+let micStarted = false;
+let stoppedByUser = false;
 
-async function boot() {
-  const root =
-    document.querySelector<HTMLElement>("#app")!;
+let reconnectTimer: number | null = null;
+let pingTimer: number | null = null;
 
-  console.log("BOOT: waiting for Even bridge");
+const RECONNECT_DELAY_MS = 2000;
+const PING_INTERVAL_MS = 10000;
 
-  const bridge =
+let answerText = "";
+let displayVersion = 0;
+
+
+// ============================================================
+// CONFIG
+// ============================================================
+
+function getBackendUrl(): string {
+  const saved = localStorage.getItem("serviceUrl");
+
+  if (saved) {
+    return saved;
+  }
+
+  return "https://phone-only-g2-interview-coach-fawf.onrender.com";
+}
+
+
+function getToken(): string {
+  return localStorage.getItem("accessToken") || "";
+}
+
+
+function websocketUrl(): string {
+  const base = getBackendUrl()
+    .replace(/^https:/, "wss:")
+    .replace(/^http:/, "ws:")
+    .replace(/\/$/, "");
+
+  const token = encodeURIComponent(
+    getToken()
+  );
+
+  return `${base}/ws/glasses?token=${token}`;
+}
+
+
+// ============================================================
+// DISPLAY
+// ============================================================
+
+async function showText(
+  text: string
+): Promise<void> {
+  answerText = text;
+
+  displayVersion += 1;
+  const version = displayVersion;
+
+  try {
+    if (!bridge) {
+      return;
+    }
+
+    const container =
+      new TextContainerProperty({
+        x: 0,
+        y: 0,
+        width: 576,
+        height: 288,
+        text: text || "Listening...",
+      });
+
+    await bridge.updatePage({
+      containers: [
+        container,
+      ],
+    });
+
+    if (version !== displayVersion) {
+      return;
+    }
+
+    if (
+      ws &&
+      ws.readyState === WebSocket.OPEN
+    ) {
+      ws.send(
+        JSON.stringify({
+          type: "display_ack",
+          text_length: text.length,
+          ts: Date.now(),
+        })
+      );
+    }
+  } catch (error) {
+    console.error(
+      "DISPLAY ERROR",
+      error
+    );
+  }
+}
+
+
+// ============================================================
+// MICROPHONE
+// ============================================================
+
+async function ensureMicrophoneStarted():
+Promise<void> {
+  if (micStarted) {
+    return;
+  }
+
+  if (!bridge) {
+    return;
+  }
+
+  try {
+    const result =
+      await bridge.audioControl(
+        true
+      );
+
+    console.log(
+      "MIC START RESULT",
+      result
+    );
+
+    if (result) {
+      micStarted = true;
+    }
+  } catch (error) {
+    console.error(
+      "MIC START ERROR",
+      error
+    );
+  }
+}
+
+
+async function stopMicrophone():
+Promise<void> {
+  if (!bridge) {
+    return;
+  }
+
+  if (!micStarted) {
+    return;
+  }
+
+  try {
+    await bridge.audioControl(
+      false
+    );
+  } catch (error) {
+    console.error(
+      "MIC STOP ERROR",
+      error
+    );
+  }
+
+  micStarted = false;
+}
+
+
+// ============================================================
+// AUDIO FORWARDING
+// ============================================================
+
+function handleAudio(
+  audio: ArrayBuffer
+): void {
+  if (
+    ws &&
+    ws.readyState === WebSocket.OPEN
+  ) {
+    ws.send(audio);
+  }
+}
+
+
+// ============================================================
+// SERVER MESSAGE HANDLING
+// ============================================================
+
+function handleServerMessage(
+  raw: string
+): void {
+  try {
+    const message =
+      JSON.parse(raw);
+
+    const type =
+      message.type;
+
+    if (
+      type === "ready" ||
+      type === "listening"
+    ) {
+      showText(
+        message.text ||
+        "Listening..."
+      );
+
+      return;
+    }
+
+    if (
+      type === "answer_delta"
+    ) {
+      answerText +=
+        message.delta || "";
+
+      showText(
+        answerText
+      );
+
+      return;
+    }
+
+    if (
+      type === "answer_start"
+    ) {
+      answerText = "";
+
+      showText(
+        "Thinking..."
+      );
+
+      return;
+    }
+
+    if (
+      type === "answer_done"
+    ) {
+      if (message.text) {
+        answerText =
+          message.text;
+      }
+
+      showText(
+        answerText
+      );
+
+      return;
+    }
+
+    if (
+      type === "error"
+    ) {
+      showText(
+        message.message ||
+        "Connection error"
+      );
+
+      return;
+    }
+  } catch (error) {
+    console.error(
+      "MESSAGE PARSE ERROR",
+      error,
+      raw
+    );
+  }
+}
+
+
+// ============================================================
+// PING
+// ============================================================
+
+function stopPing(): void {
+  if (
+    pingTimer !== null
+  ) {
+    clearInterval(
+      pingTimer
+    );
+
+    pingTimer = null;
+  }
+}
+
+
+function startPing(): void {
+  stopPing();
+
+  pingTimer =
+    window.setInterval(
+      () => {
+        if (
+          ws &&
+          ws.readyState
+            === WebSocket.OPEN
+        ) {
+          ws.send(
+            JSON.stringify({
+              type: "ping",
+              ts: Date.now(),
+            })
+          );
+        }
+      },
+      PING_INTERVAL_MS
+    );
+}
+
+
+// ============================================================
+// RECONNECT
+// ============================================================
+
+function scheduleReconnect():
+void {
+  if (stoppedByUser) {
+    return;
+  }
+
+  if (
+    reconnectTimer !== null
+  ) {
+    return;
+  }
+
+  reconnectTimer =
+    window.setTimeout(
+      () => {
+        reconnectTimer = null;
+
+        connectWebSocket();
+      },
+      RECONNECT_DELAY_MS
+    );
+}
+
+
+// ============================================================
+// WEBSOCKET
+// ============================================================
+
+function connectWebSocket():
+void {
+  if (stoppedByUser) {
+    return;
+  }
+
+  if (
+    ws &&
+    (
+      ws.readyState
+        === WebSocket.OPEN ||
+      ws.readyState
+        === WebSocket.CONNECTING
+    )
+  ) {
+    return;
+  }
+
+  const socket =
+    new WebSocket(
+      websocketUrl()
+    );
+
+  socket.binaryType =
+    "arraybuffer";
+
+  ws = socket;
+
+  socket.onopen =
+    async () => {
+      if (ws !== socket) {
+        return;
+      }
+
+      console.log(
+        "WS OPEN"
+      );
+
+      answerText = "";
+
+      startPing();
+
+      await showText(
+        "Listening..."
+      );
+
+      await ensureMicrophoneStarted();
+    };
+
+
+  socket.onmessage =
+    (event) => {
+      if (ws !== socket) {
+        return;
+      }
+
+      if (
+        typeof event.data
+        === "string"
+      ) {
+        handleServerMessage(
+          event.data
+        );
+      }
+    };
+
+
+  socket.onerror =
+    (event) => {
+      console.error(
+        "WS ERROR",
+        event
+      );
+    };
+
+
+  socket.onclose =
+    (event) => {
+      if (ws !== socket) {
+        return;
+      }
+
+      console.log(
+        "WS CLOSED",
+        {
+          code:
+            event.code,
+          reason:
+            event.reason,
+          clean:
+            event.wasClean,
+        }
+      );
+
+      stopPing();
+
+      ws = null;
+
+      /*
+       * IMPORTANT:
+       *
+       * Do NOT stop the G2 microphone here.
+       *
+       * Code 1006 is an unexpected
+       * connection loss. The app should
+       * simply reconnect.
+       *
+       * Starting/stopping the microphone
+       * on every reconnect can itself
+       * destabilize the Even app.
+       */
+      scheduleReconnect();
+    };
+}
+
+
+// ============================================================
+// MANUAL STOP
+// ============================================================
+
+async function stopEverything():
+Promise<void> {
+  stoppedByUser = true;
+
+  if (
+    reconnectTimer !== null
+  ) {
+    clearTimeout(
+      reconnectTimer
+    );
+
+    reconnectTimer = null;
+  }
+
+  stopPing();
+
+  const current =
+    ws;
+
+  ws = null;
+
+  if (
+    current &&
+    (
+      current.readyState
+        === WebSocket.OPEN ||
+      current.readyState
+        === WebSocket.CONNECTING
+    )
+  ) {
+    current.close(
+      1000,
+      "User stopped"
+    );
+  }
+
+  await stopMicrophone();
+
+  await showText(
+    "Stopped"
+  );
+}
+
+
+// ============================================================
+// STARTUP
+// ============================================================
+
+async function main():
+Promise<void> {
+  console.log(
+    "BOOT: Interview Lens"
+  );
+
+  bridge =
     await waitForEvenAppBridge();
 
-  console.log("BOOT: bridge ready");
+  console.log(
+    "EVEN BRIDGE READY"
+  );
 
-  let profile =
-    await loadProfile(bridge);
+  await bridge.createStartUpPageContainer({
+    containers: [
+      new TextContainerProperty({
+        x: 0,
+        y: 0,
+        width: 576,
+        height: 288,
+        text: "Starting...",
+      }),
+    ],
+  });
 
-  let ws: WebSocket | undefined;
+  console.log(
+    "GLASSES UI CREATED"
+  );
 
-  let reconnectTimer:
+
+  /*
+   * G2 audio packets.
+   */
+  bridge.onAudioEvent(
+    (event: any) => {
+      const payload =
+        event?.data ??
+        event;
+
+      if (
+        payload instanceof ArrayBuffer
+      ) {
+        handleAudio(
+          payload
+        );
+
+        return;
+      }
+
+      if (
+        ArrayBuffer.isView(
+          payload
+        )
+      ) {
+        const view =
+          payload as ArrayBufferView;
+
+        const copy =
+          view.buffer.slice(
+            view.byteOffset,
+            view.byteOffset +
+            view.byteLength
+          );
+
+        handleAudio(
+          copy
+        );
+      }
+    }
+  );
+
+
+  /*
+   * Log Even events only.
+   *
+   * Do NOT close the WebSocket
+   * when system events occur.
+   */
+  if (
+    typeof bridge.onEvenHubEvent
+    === "function"
+  ) {
+    bridge.onEvenHubEvent(
+      (event: any) => {
+        console.log(
+          "EVEN SYSTEM EVENT",
+          event
+        );
+      }
+    );
+  }
+
+
+  stoppedByUser =
+    false;
+
+  connectWebSocket();
+
+  await ensureMicrophoneStarted();
+
+
+  /*
+   * Optional browser button.
+   */
+  const stopButton =
+    document.getElementById(
+      "stop"
+    );
+
+  if (stopButton) {
+    stopButton.addEventListener(
+      "click",
+      () => {
+        stopEverything();
+      }
+    );
+  }
+}
+
+
+main().catch(
+  (error) => {
+    console.error(
+      "BOOT ERROR",
+      error
+    );
+  }
+);  let reconnectTimer:
     ReturnType<typeof setTimeout> | undefined;
 
   let pingTimer:
