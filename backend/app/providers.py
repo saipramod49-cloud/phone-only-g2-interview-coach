@@ -11,29 +11,29 @@ import websockets
 SYSTEM = """
 You are answering a technical job interview as the candidate.
 
-Your answer will be displayed on smart glasses, so it must be:
-- natural
+The answer will be displayed on smart glasses.
+
+Your response must be:
 - concise
-- direct
+- natural
+- technically accurate
+- easy to scan
 - easy to speak aloud
-- easy to scan quickly
 
-ANSWER STYLE
+STYLE
 
-Sound like a real experienced candidate speaking naturally.
+Answer like an experienced Data Engineer speaking in an interview.
 
 Do not sound like:
-- a textbook
 - documentation
+- a textbook
 - an AI assistant
-- a list of definitions
 - a coaching guide
-
-Usually answer in 2 to 4 short sentences.
+- a long technical article
 
 Start directly with the answer.
 
-Do not begin with phrases such as:
+Do not begin with:
 "Sure"
 "Certainly"
 "Of course"
@@ -41,132 +41,149 @@ Do not begin with phrases such as:
 "The answer is"
 "Here's how"
 
-Use first person naturally when appropriate:
+Use first person naturally:
 "I use..."
-"In my current project..."
-"I would..."
+"I'd first..."
+"In my project..."
 "I typically..."
+
+LENGTH
+
+This is extremely important.
+
+Default answer:
+- 45 to 65 words
+- usually 3 short sentences
+- absolute maximum: 75 words
+
+Do not exceed 75 words.
+
+Even if the question is broad, give only the most important points.
+
+The interviewer can ask follow-up questions.
+
+Do not try to explain every possible detail.
+
+For a complex architecture or scenario question:
+1. give the main approach
+2. mention the most important technologies or checks
+3. finish with the validation, result, or recovery step
 
 CANDIDATE EVIDENCE
 
-CANDIDATE EVIDENCE contains information retrieved from the candidate's
-uploaded resume, professional profile, roles and responsibilities,
-project notes, job description, and other interview material.
+CANDIDATE EVIDENCE may contain information from:
+- resume
+- professional profile
+- roles and responsibilities
+- project notes
+- job description
+- interview preparation documents
 
-Whenever the question relates to the candidate's:
-- experience
-- current project
-- previous project
+When the question asks about:
+- my experience
+- my current project
+- my previous projects
 - responsibilities
-- technologies used
-- implementation approach
-- challenges
-- architecture
+- technologies I used
+- challenges I faced
+- production issues
+- implementation examples
 - achievements
-- examples
 
-use the supplied CANDIDATE EVIDENCE as the primary source.
+use CANDIDATE EVIDENCE as the primary source.
 
 Never invent:
-- employers
-- clients
+- employer names
+- client names
 - projects
 - dates
 - metrics
 - responsibilities
-- tools the candidate did not use
+- technologies
 - achievements
 - outcomes
 
-If candidate evidence supports a practical example, naturally connect
-the technical answer to that experience.
+If there is enough evidence, answer confidently as the candidate.
 
-Example style:
+If evidence is incomplete, use only what is supported.
 
-"I use MERGE when I need both inserts and updates in the same load.
-In my current Snowflake pipelines, I match on the business key and
-update the record only when the relevant source values have changed."
+Do not say:
+"I don't have enough context"
+unless there is truly no relevant candidate evidence available.
 
 GENERAL TECHNICAL QUESTIONS
 
-For purely conceptual technical questions, use accurate technical
-knowledge.
+For general technical questions, answer using accurate technical
+knowledge even when candidate evidence is unavailable.
 
-If candidate evidence contains relevant experience with that
-technology, briefly connect the concept to the candidate's experience.
+Do not refuse a normal technical question because the evidence
+does not mention the technology.
 
-Do not force an experience example when it does not naturally fit.
+If relevant candidate evidence exists, connect it briefly to practical
+experience.
 
-KEYWORDS
+TECHNOLOGY NAMES
 
-Highlight only the most important technical keywords by writing them
-in UPPERCASE.
+Use normal capitalization.
 
 Examples:
-IAM
-SERVICE ACCOUNT
-LEAST PRIVILEGE
-BIGQUERY
-DATAFLOW
-MERGE
+BigQuery
+Dataflow
+Pub/Sub
+Cloud Composer
+GCS
+Snowflake
 CDC
-SNOWFLAKE
+IAM
+SCD Type II
+SQL
+PySpark
 
-Do NOT use Markdown bold such as **keyword** because the glasses may
-display the asterisks literally.
+Do not capitalize phrases merely for emphasis.
 
-Keep keyword highlighting selective. Usually 2 to 5 important terms.
+Do not use Markdown bold.
+Do not use asterisks.
+Do not use headings.
+Do not use tables.
 
 COMPARISON QUESTIONS
 
-For questions such as:
-"What is the difference between X and Y?"
+For questions comparing two technologies:
+- state the main difference
+- explain one practical distinction
+- say when each is appropriate
 
-Give:
-1. the main difference immediately
-2. one important practical distinction
-3. when each is normally used
-
-Keep it conversational rather than creating a table or long list.
+Keep the answer conversational.
 
 SCENARIO QUESTIONS
 
-For:
+For questions like:
 "How would you..."
 "Suppose..."
 "What if..."
-"How do you handle..."
+"How do you troubleshoot..."
 
-Explain the approach in a natural sequence:
+Use a simple sequence:
+
 "I'd first..."
 "Then..."
 "Finally..."
 
-Mention relevant candidate experience when available.
+Mention only the most important actions.
 
 EXPERIENCE QUESTIONS
 
-For:
+For questions such as:
 "Tell me about your project"
-"Describe your responsibilities"
+"Tell me about a challenge"
 "Give me an example"
-"What challenge did you face?"
+"What are your responsibilities?"
 
-Answer as the candidate and use ONLY supported candidate evidence.
+Use this compact structure:
 
-Keep the story compact:
 context -> what I did -> result
 
-LENGTH
-
-Target roughly 45 to 90 words.
-
-Most answers should fit comfortably on the glasses.
-
-Only go longer when the question genuinely requires additional
-technical explanation.
-
-Do not add unnecessary background.
+Use only supported candidate evidence.
 
 Do not repeat the interview question.
 
@@ -176,32 +193,31 @@ Return only the answer the candidate should say.
 """.strip()
 
 
+MAX_WORDS = 72
+
+
 def _clean_output(text: str) -> str:
     """
-    Keep the response friendly to the Even glasses renderer.
+    Normalize model output for the Even glasses renderer.
     """
 
     text = text.strip()
 
-    # Even may show Markdown formatting characters literally.
     text = text.replace("**", "")
     text = text.replace("__", "")
 
-    # Remove Markdown headings.
     text = re.sub(
         r"(?m)^\s*#{1,6}\s*",
         "",
         text,
     )
 
-    # Avoid large vertical lists on the glasses.
     text = re.sub(
         r"(?m)^\s*[-•]\s+",
         "",
         text,
     )
 
-    # Normalize excessive whitespace.
     text = re.sub(
         r"[ \t]+",
         " ",
@@ -209,26 +225,78 @@ def _clean_output(text: str) -> str:
     )
 
     text = re.sub(
-        r"\n{3,}",
-        "\n\n",
+        r"\n+",
+        " ",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
         text,
     )
 
     return text.strip()
 
 
-def _display_chunks(
+def _limit_words(
     text: str,
-    target_size: int = 150,
-):
+    max_words: int = MAX_WORDS,
+) -> str:
     """
-    Yield larger display-friendly chunks instead of individual
-    model token fragments.
-
-    This reduces the number of updates Even has to render.
+    Hard-stop overly long responses so Even never receives a
+    large answer that is difficult to render.
     """
 
     text = _clean_output(text)
+
+    words = text.split()
+
+    if len(words) <= max_words:
+        return text
+
+    shortened = " ".join(
+        words[:max_words]
+    )
+
+    # Prefer ending at the last complete sentence if it is not
+    # dramatically shorter.
+    last_period = max(
+        shortened.rfind("."),
+        shortened.rfind("?"),
+        shortened.rfind("!"),
+    )
+
+    if last_period >= int(
+        len(shortened) * 0.65
+    ):
+        shortened = shortened[
+            : last_period + 1
+        ]
+    else:
+        shortened = (
+            shortened.rstrip(
+                ",;:-"
+            )
+            + "."
+        )
+
+    return shortened.strip()
+
+
+def _display_chunks(
+    text: str,
+    target_size: int = 220,
+):
+    """
+    Send a very small number of larger chunks to Even.
+
+    This minimizes repeated renderer updates.
+    """
+
+    text = _limit_words(
+        text
+    )
 
     if not text:
         return
@@ -254,7 +322,8 @@ def _display_chunks(
 
         if (
             current
-            and len(candidate) > target_size
+            and len(candidate)
+            > target_size
         ):
             yield current + " "
             current = sentence
@@ -269,7 +338,9 @@ async def answer_stream(
     question: str,
     evidence: str,
 ):
-    key = os.environ["OPENAI_API_KEY"]
+    key = os.environ[
+        "OPENAI_API_KEY"
+    ]
 
     model = os.getenv(
         "OPENAI_MODEL",
@@ -291,12 +362,14 @@ async def answer_stream(
                     f"{question}\n\n"
                     "CANDIDATE EVIDENCE:\n"
                     f"{evidence}\n\n"
-                    "Answer exactly as the candidate should "
-                    "say it aloud in the interview."
+                    "Answer exactly as the candidate "
+                    "should say it aloud.\n\n"
+                    "Important: keep the complete answer "
+                    "under 75 words."
                 ),
             },
         ],
-        "max_output_tokens": 140,
+        "max_output_tokens": 110,
     }
 
     timeout = httpx.Timeout(
@@ -314,14 +387,21 @@ async def answer_stream(
             "POST",
             "https://api.openai.com/v1/responses",
             headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
+                "Authorization":
+                    f"Bearer {key}",
+                "Content-Type":
+                    "application/json",
             },
             json=payload,
         ) as response:
 
-            if response.status_code >= 400:
-                body = await response.aread()
+            if (
+                response.status_code
+                >= 400
+            ):
+                body = await (
+                    response.aread()
+                )
 
                 body_text = body.decode(
                     "utf-8",
@@ -329,28 +409,35 @@ async def answer_stream(
                 )
 
                 print(
-                    "OPENAI RESPONSES API ERROR STATUS:",
+                    "OPENAI RESPONSES API "
+                    "ERROR STATUS:",
                     response.status_code,
                     flush=True,
                 )
 
                 print(
-                    "OPENAI RESPONSES API ERROR BODY:",
+                    "OPENAI RESPONSES API "
+                    "ERROR BODY:",
                     body_text,
                     flush=True,
                 )
 
                 raise RuntimeError(
-                    "OpenAI Responses API failed: "
+                    "OpenAI Responses API "
+                    "failed: "
                     f"{response.status_code} "
                     f"{body_text}"
                 )
 
             full = ""
 
-            async for line in response.aiter_lines():
+            async for line in (
+                response.aiter_lines()
+            ):
 
-                if not line.startswith("data: "):
+                if not line.startswith(
+                    "data: "
+                ):
                     continue
 
                 data = line[6:]
@@ -362,12 +449,15 @@ async def answer_stream(
                     event = json.loads(
                         data
                     )
-                except json.JSONDecodeError:
+                except (
+                    json.JSONDecodeError
+                ):
                     continue
 
                 if (
                     event.get("type")
-                    == "response.output_text.delta"
+                    ==
+                    "response.output_text.delta"
                 ):
                     delta = event.get(
                         "delta",
@@ -377,18 +467,22 @@ async def answer_stream(
                     if delta:
                         full += delta
 
-            full = _clean_output(
+            full = _limit_words(
                 full
             )
 
-            for chunk in _display_chunks(
-                full
+            for chunk in (
+                _display_chunks(
+                    full
+                )
             ):
                 yield chunk
 
 
 async def openai_transcription_session():
-    key = os.environ["OPENAI_API_KEY"]
+    key = os.environ[
+        "OPENAI_API_KEY"
+    ]
 
     url = (
         "wss://api.openai.com/"
@@ -399,7 +493,8 @@ async def openai_transcription_session():
     ws = await websockets.connect(
         url,
         additional_headers={
-            "Authorization": f"Bearer {key}",
+            "Authorization":
+                f"Bearer {key}",
         },
         ping_interval=10,
         ping_timeout=10,
@@ -416,11 +511,14 @@ async def openai_transcription_session():
             "audio": {
                 "input": {
                     "format": {
-                        "type": "audio/pcm",
-                        "rate": 24000,
+                        "type":
+                            "audio/pcm",
+                        "rate":
+                            24000,
                     },
                     "noise_reduction": {
-                        "type": "far_field",
+                        "type":
+                            "far_field",
                     },
                     "transcription": {
                         "model":
