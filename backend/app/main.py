@@ -19,18 +19,33 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import HTMLResponse
+from fastapi.responses import (
+    HTMLResponse,
+    StreamingResponse,
+)
 from pypdf import PdfReader
 from docx import Document
 
 from .question import is_question
 from .retrieval import search
-from .storage import active_profile, chunks_for, connect, snapshot
-from .providers import answer_stream, openai_transcription_session
+from .storage import (
+    active_profile,
+    chunks_for,
+    connect,
+    snapshot,
+)
+from .providers import (
+    answer_stream,
+    openai_transcription_session,
+)
 
 
 MAX_UPLOAD = 8 * 1024 * 1024
 
+
+# ============================================================
+# AUTHENTICATION
+# ============================================================
 
 def auth(token: str | None):
     expected = os.getenv("APP_TOKEN")
@@ -48,29 +63,178 @@ def auth(token: str | None):
         )
 
 
+def auth_agent(
+    authorization: str | None,
+    x_app_token: str | None,
+):
+    """
+    Even Agent Configuration normally sends the token as:
+
+        Authorization: Bearer <token>
+
+    We also accept X-App-Token so the endpoint can be tested
+    manually using the same APP_TOKEN.
+    """
+
+    supplied = None
+
+    if authorization:
+        prefix = "Bearer "
+
+        if authorization.startswith(prefix):
+            supplied = authorization[len(prefix):].strip()
+
+    if not supplied:
+        supplied = x_app_token
+
+    auth(supplied)
+
+
+# ============================================================
+# FILE EXTRACTION
+# ============================================================
+
 def extract(name: str, data: bytes) -> str:
     ext = name.lower().rsplit(".", 1)[-1]
 
     if ext in ("txt", "md", "csv"):
-        return data.decode("utf-8", errors="replace")
+        return data.decode(
+            "utf-8",
+            errors="replace",
+        )
 
     if ext == "pdf":
         return "\n".join(
             page.extract_text() or ""
-            for page in PdfReader(io.BytesIO(data)).pages
+            for page in PdfReader(
+                io.BytesIO(data)
+            ).pages
         )
 
     if ext == "docx":
         return "\n".join(
             p.text
-            for p in Document(io.BytesIO(data)).paragraphs
+            for p in Document(
+                io.BytesIO(data)
+            ).paragraphs
         )
 
     raise HTTPException(
         status_code=415,
-        detail="Supported files: PDF, DOCX, TXT, MD, CSV",
+        detail=(
+            "Supported files: "
+            "PDF, DOCX, TXT, MD, CSV"
+        ),
     )
 
+
+# ============================================================
+# CHAT MESSAGE HELPERS
+# ============================================================
+
+def message_text(content) -> str:
+    """
+    Extract text from either:
+
+    "content": "question"
+
+    or OpenAI-style content arrays such as:
+
+    "content": [
+        {"type": "text", "text": "question"}
+    ]
+    """
+
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        parts = []
+
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+
+            text = item.get("text")
+
+            if isinstance(text, str):
+                parts.append(text)
+
+        return "\n".join(parts).strip()
+
+    return ""
+
+
+def latest_user_question(messages) -> str:
+    if not isinstance(messages, list):
+        return ""
+
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+
+        if message.get("role") != "user":
+            continue
+
+        text = message_text(
+            message.get("content")
+        )
+
+        if text:
+            return text
+
+    return ""
+
+
+def interview_context(
+    question: str,
+):
+    """
+    Load the active profile and retrieve candidate evidence
+    relevant to this interview question.
+    """
+
+    with connect() as db:
+        profile = active_profile(db)
+
+        if not profile:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No active interview profile. "
+                    "Open Interview Lens Manager and "
+                    "select a profile first."
+                ),
+            )
+
+        evidence = search(
+            chunks_for(
+                db,
+                profile["id"],
+            ),
+            question,
+        )
+
+    grounded = "\n\n".join(
+        f"[{chunk.source}] {chunk.text}"
+        for chunk in evidence
+    )
+
+    if not grounded:
+        grounded = (
+            "No matching candidate evidence "
+            "was uploaded."
+        )
+
+    return (
+        profile,
+        grounded,
+    )
+
+
+# ============================================================
+# FASTAPI
+# ============================================================
 
 app = FastAPI(
     title="Interview Lens",
@@ -79,18 +243,328 @@ app = FastAPI(
 )
 
 
+# ============================================================
+# HEALTH
+# ============================================================
+
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "service": "Interview Lens",
+        "agent_endpoint": "/v1/chat/completions",
+    }
 
 
-@app.get("/", response_class=HTMLResponse)
+# ============================================================
+# EVEN AI / OPENAI-COMPATIBLE AGENT ENDPOINT
+# ============================================================
+
+@app.post("/v1/chat/completions")
+async def chat_completions(
+    body: dict,
+    authorization: str | None = Header(None),
+    x_app_token: str | None = Header(None),
+):
+    """
+    OpenAI-compatible Chat Completions endpoint for
+    Even Realities Agent Configuration.
+
+    Even configuration:
+
+        Name:
+        Interview Lens
+
+        URL:
+        https://<your-render-host>/v1/chat/completions
+
+        Token:
+        APP_TOKEN
+    """
+
+    auth_agent(
+        authorization,
+        x_app_token,
+    )
+
+    messages = body.get(
+        "messages",
+        []
+    )
+
+    question = latest_user_question(
+        messages
+    )
+
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No user message was supplied."
+            ),
+        )
+
+    profile, grounded = interview_context(
+        question
+    )
+
+    print(
+        f"AGENT QUESTION: {question}",
+        flush=True,
+    )
+
+    print(
+        f"AGENT PROFILE: {profile['name']}",
+        flush=True,
+    )
+
+    requested_stream = bool(
+        body.get("stream", False)
+    )
+
+    completion_id = (
+        "chatcmpl-"
+        + uuid.uuid4().hex
+    )
+
+    created = int(
+        time.time()
+    )
+
+    model = os.getenv(
+        "OPENAI_MODEL",
+        "gpt-5-mini",
+    )
+
+
+    # --------------------------------------------------------
+    # STREAMING RESPONSE
+    # --------------------------------------------------------
+
+    if requested_stream:
+
+        async def event_stream():
+            try:
+                first_chunk = {
+                    "id": completion_id,
+                    "object":
+                        "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role":
+                                    "assistant"
+                            },
+                            "finish_reason":
+                                None,
+                        }
+                    ],
+                }
+
+                yield (
+                    "data: "
+                    + json.dumps(
+                        first_chunk
+                    )
+                    + "\n\n"
+                )
+
+                full = ""
+
+                async for delta in answer_stream(
+                    question,
+                    grounded,
+                ):
+                    full += delta
+
+                    chunk = {
+                        "id":
+                            completion_id,
+                        "object":
+                            "chat.completion.chunk",
+                        "created":
+                            created,
+                        "model":
+                            model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "content":
+                                        delta
+                                },
+                                "finish_reason":
+                                    None,
+                            }
+                        ],
+                    }
+
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            chunk
+                        )
+                        + "\n\n"
+                    )
+
+                final_chunk = {
+                    "id":
+                        completion_id,
+                    "object":
+                        "chat.completion.chunk",
+                    "created":
+                        created,
+                    "model":
+                        model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason":
+                                "stop",
+                        }
+                    ],
+                }
+
+                yield (
+                    "data: "
+                    + json.dumps(
+                        final_chunk
+                    )
+                    + "\n\n"
+                )
+
+                yield "data: [DONE]\n\n"
+
+                print(
+                    "AGENT ANSWER COMPLETE:",
+                    full,
+                    flush=True,
+                )
+
+            except Exception as e:
+                print(
+                    "AGENT STREAM ERROR:",
+                    repr(e),
+                    flush=True,
+                )
+
+                error_payload = {
+                    "error": {
+                        "message":
+                            "Answer generation failed",
+                        "type":
+                            "server_error",
+                    }
+                }
+
+                yield (
+                    "data: "
+                    + json.dumps(
+                        error_payload
+                    )
+                    + "\n\n"
+                )
+
+                yield "data: [DONE]\n\n"
+
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control":
+                    "no-cache",
+                "Connection":
+                    "keep-alive",
+                "X-Accel-Buffering":
+                    "no",
+            },
+        )
+
+
+    # --------------------------------------------------------
+    # NORMAL NON-STREAMING RESPONSE
+    # --------------------------------------------------------
+
+    try:
+        full = ""
+
+        async for delta in answer_stream(
+            question,
+            grounded,
+        ):
+            full += delta
+
+        print(
+            "AGENT ANSWER COMPLETE:",
+            full,
+            flush=True,
+        )
+
+        return {
+            "id": completion_id,
+            "object": "chat.completion",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": full,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            },
+        }
+
+    except Exception as e:
+        print(
+            "AGENT ANSWER ERROR:",
+            repr(e),
+            flush=True,
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "OpenAI answer generation failed"
+            ),
+        )
+
+
+# ============================================================
+# MANAGER HOME PAGE
+# ============================================================
+
+@app.get(
+    "/",
+    response_class=HTMLResponse,
+)
 def home():
-    return HTMLResponse(MANAGER_HTML)
+    return HTMLResponse(
+        MANAGER_HTML
+    )
 
+
+# ============================================================
+# MANAGER API
+# ============================================================
 
 @app.get("/api/state")
-def state(x_app_token: str | None = Header(None)):
+def state(
+    x_app_token: str | None =
+        Header(None),
+):
     auth(x_app_token)
 
     with connect() as db:
@@ -101,14 +575,19 @@ def state(x_app_token: str | None = Header(None)):
 def create_profile(
     name: str = Form(...),
     job_description: str = Form(""),
-    x_app_token: str | None = Header(None),
+    x_app_token: str | None =
+        Header(None),
 ):
     auth(x_app_token)
 
-    pid = str(uuid.uuid4())
+    pid = str(
+        uuid.uuid4()
+    )
 
     with connect() as db:
-        db.execute("UPDATE profiles SET active=0")
+        db.execute(
+            "UPDATE profiles SET active=0"
+        )
 
         db.execute(
             "INSERT INTO profiles VALUES(?,?,?,?,?)",
@@ -123,48 +602,69 @@ def create_profile(
 
         db.commit()
 
-    return {"id": pid}
+    return {
+        "id": pid
+    }
 
 
-@app.post("/api/profiles/{pid}/activate")
+@app.post(
+    "/api/profiles/{pid}/activate"
+)
 def activate(
     pid: str,
-    x_app_token: str | None = Header(None),
+    x_app_token: str | None =
+        Header(None),
 ):
     auth(x_app_token)
 
     with connect() as db:
         found = db.execute(
-            "SELECT 1 FROM profiles WHERE id=?",
+            """
+            SELECT 1
+            FROM profiles
+            WHERE id=?
+            """,
             (pid,),
         ).fetchone()
 
         if not found:
             raise HTTPException(
                 status_code=404,
-                detail="Profile not found",
+                detail=(
+                    "Profile not found"
+                ),
             )
 
         db.execute(
-            "UPDATE profiles SET active=(id=?)",
+            """
+            UPDATE profiles
+            SET active=(id=?)
+            """,
             (pid,),
         )
 
         db.commit()
 
-    return {"ok": True}
+    return {
+        "ok": True
+    }
 
 
-@app.post("/api/profiles/{pid}/documents")
+@app.post(
+    "/api/profiles/{pid}/documents"
+)
 async def upload(
     pid: str,
     kind: str = Form(...),
     file: UploadFile = File(...),
-    x_app_token: str | None = Header(None),
+    x_app_token: str | None =
+        Header(None),
 ):
     auth(x_app_token)
 
-    data = await file.read(MAX_UPLOAD + 1)
+    data = await file.read(
+        MAX_UPLOAD + 1
+    )
 
     if len(data) > MAX_UPLOAD:
         raise HTTPException(
@@ -173,32 +673,46 @@ async def upload(
         )
 
     text = extract(
-        file.filename or "upload.txt",
+        file.filename
+        or "upload.txt",
         data,
     ).strip()
 
     if not text:
         raise HTTPException(
             status_code=422,
-            detail="No readable text found",
+            detail=(
+                "No readable text found"
+            ),
         )
 
-    did = str(uuid.uuid4())
+    did = str(
+        uuid.uuid4()
+    )
 
     with connect() as db:
         found = db.execute(
-            "SELECT 1 FROM profiles WHERE id=?",
+            """
+            SELECT 1
+            FROM profiles
+            WHERE id=?
+            """,
             (pid,),
         ).fetchone()
 
         if not found:
             raise HTTPException(
                 status_code=404,
-                detail="Profile not found",
+                detail=(
+                    "Profile not found"
+                ),
             )
 
         db.execute(
-            "INSERT INTO documents VALUES(?,?,?,?,?,?)",
+            """
+            INSERT INTO documents
+            VALUES(?,?,?,?,?,?)
+            """,
             (
                 did,
                 pid,
@@ -217,31 +731,58 @@ async def upload(
     }
 
 
-@app.delete("/api/documents/{did}")
+@app.delete(
+    "/api/documents/{did}"
+)
 def delete_document(
     did: str,
-    x_app_token: str | None = Header(None),
+    x_app_token: str | None =
+        Header(None),
 ):
     auth(x_app_token)
 
     with connect() as db:
         db.execute(
-            "DELETE FROM documents WHERE id=?",
+            """
+            DELETE FROM documents
+            WHERE id=?
+            """,
             (did,),
         )
 
         db.commit()
 
-    return {"ok": True}
+    return {
+        "ok": True
+    }
 
+
+# ============================================================
+# EXISTING G2 WEBSOCKET
+# ============================================================
 
 @app.websocket("/ws/glasses")
-async def glasses(ws: WebSocket):
-    expected_token = os.getenv("APP_TOKEN")
-    supplied_token = ws.query_params.get("token")
+async def glasses(
+    ws: WebSocket
+):
+    expected_token = os.getenv(
+        "APP_TOKEN"
+    )
 
-    if not expected_token or supplied_token != expected_token:
-        await ws.close(code=1008)
+    supplied_token = (
+        ws.query_params.get(
+            "token"
+        )
+    )
+
+    if (
+        not expected_token
+        or supplied_token
+        != expected_token
+    ):
+        await ws.close(
+            code=1008
+        )
         return
 
     await ws.accept()
@@ -257,11 +798,12 @@ async def glasses(ws: WebSocket):
 
     sent = {}
     acks = []
+
     rate_state = None
 
     try:
         # --------------------------------------------------
-        # Load active interview profile
+        # Load active profile
         # --------------------------------------------------
 
         with connect() as db:
@@ -271,45 +813,53 @@ async def glasses(ws: WebSocket):
                 await ws.send_json(
                     {
                         "type": "error",
-                        "message": "No active interview profile",
+                        "message":
+                            "No active interview profile",
                     }
                 )
 
-                await ws.close(code=1011)
+                await ws.close(
+                    code=1011
+                )
                 return
 
             profile_id = p["id"]
             profile_name = p["name"]
 
-        # --------------------------------------------------
-        # Tell G2 client backend is ready
-        # --------------------------------------------------
 
         await ws.send_json(
             {
                 "type": "ready",
-                "profile": profile_name,
+                "profile":
+                    profile_name,
             }
         )
 
         print(
-            f"ACTIVE PROFILE: {profile_name}",
+            f"ACTIVE PROFILE: "
+            f"{profile_name}",
             flush=True,
         )
 
+
         # --------------------------------------------------
-        # Open OpenAI realtime transcription
+        # OpenAI realtime transcription
         # --------------------------------------------------
 
         print(
-            "OPENING OPENAI TRANSCRIPTION SESSION",
+            "OPENING OPENAI "
+            "TRANSCRIPTION SESSION",
             flush=True,
         )
 
-        transcription = await openai_transcription_session()
+        transcription = (
+            await
+            openai_transcription_session()
+        )
 
         print(
-            "OPENAI TRANSCRIPTION CONNECTED",
+            "OPENAI TRANSCRIPTION "
+            "CONNECTED",
             flush=True,
         )
 
@@ -320,57 +870,75 @@ async def glasses(ws: WebSocket):
             }
         )
 
-        started = time.perf_counter()
+        started = (
+            time.perf_counter()
+        )
+
 
         # --------------------------------------------------
-        # Generate answer
+        # Answer generation
         # --------------------------------------------------
 
         async def generate(
             question: str,
             stt_ms: float,
         ):
-            t0 = time.perf_counter()
+            t0 = (
+                time.perf_counter()
+            )
 
             try:
                 await ws.send_json(
                     {
                         "type": "state",
-                        "state": "question detected",
-                        "transcript": question,
+                        "state":
+                            "question detected",
+                        "transcript":
+                            question,
                     }
                 )
 
                 print(
-                    f"QUESTION: {question}",
+                    f"QUESTION: "
+                    f"{question}",
                     flush=True,
                 )
 
                 with connect() as db:
                     evidence = search(
-                        chunks_for(db, profile_id),
+                        chunks_for(
+                            db,
+                            profile_id,
+                        ),
                         question,
                     )
 
                 retrieval_ms = (
-                    time.perf_counter() - t0
+                    time.perf_counter()
+                    - t0
                 ) * 1000
 
-                grounded = "\n\n".join(
-                    f"[{c.source}] {c.text}"
-                    for c in evidence
+                grounded = (
+                    "\n\n".join(
+                        f"[{c.source}] "
+                        f"{c.text}"
+                        for c in evidence
+                    )
                 )
 
                 if not grounded:
                     grounded = (
-                        "No matching candidate evidence "
-                        "was uploaded."
+                        "No matching candidate "
+                        "evidence was uploaded."
                     )
 
                 full = ""
                 first = None
 
-                answer_id = str(uuid.uuid4())
+                answer_id = str(
+                    uuid.uuid4()
+                )
+
                 seq = 0
 
                 async for delta in answer_stream(
@@ -378,46 +946,69 @@ async def glasses(ws: WebSocket):
                     grounded,
                 ):
                     if first is None:
-                        first = time.perf_counter()
+                        first = (
+                            time.perf_counter()
+                        )
 
                     full += delta
                     seq += 1
 
                     sent[
-                        (answer_id, seq)
-                    ] = time.perf_counter()
+                        (
+                            answer_id,
+                            seq,
+                        )
+                    ] = (
+                        time.perf_counter()
+                    )
 
                     await ws.send_json(
                         {
-                            "type": "answer.delta",
-                            "text": delta,
-                            "first": len(full) == len(delta),
-                            "answer_id": answer_id,
-                            "seq": seq,
+                            "type":
+                                "answer.delta",
+                            "text":
+                                delta,
+                            "first":
+                                len(full)
+                                == len(delta),
+                            "answer_id":
+                                answer_id,
+                            "seq":
+                                seq,
                         }
                     )
 
-                await asyncio.sleep(0.08)
+                await asyncio.sleep(
+                    0.08
+                )
 
                 total = (
-                    time.perf_counter() - t0
+                    time.perf_counter()
+                    - t0
                 ) * 1000
 
                 mine = [
                     a
                     for a in acks
-                    if a[0] == answer_id
+                    if a[0]
+                    == answer_id
                 ]
 
                 if mine:
                     transport_ms = round(
-                        sum(a[2] for a in mine)
+                        sum(
+                            a[2]
+                            for a in mine
+                        )
                         / len(mine)
                         / 2
                     )
 
                     display_ms = round(
-                        sum(a[3] for a in mine)
+                        sum(
+                            a[3]
+                            for a in mine
+                        )
                         / len(mine)
                     )
                 else:
@@ -425,32 +1016,46 @@ async def glasses(ws: WebSocket):
                     display_ms = None
 
                 first_token_ms = (
-                    (first - t0) * 1000
+                    (
+                        first - t0
+                    ) * 1000
                     if first
                     else total
                 )
 
                 metrics = {
-                    "stt_ms": round(stt_ms),
-                    "retrieval_ms": round(retrieval_ms),
-                    "model_first_token_ms": round(
-                        first_token_ms
-                    ),
-                    "transport_ms": transport_ms,
-                    "display_estimate_ms": display_ms,
-                    "total_ms": round(total),
+                    "stt_ms":
+                        round(stt_ms),
+                    "retrieval_ms":
+                        round(
+                            retrieval_ms
+                        ),
+                    "model_first_token_ms":
+                        round(
+                            first_token_ms
+                        ),
+                    "transport_ms":
+                        transport_ms,
+                    "display_estimate_ms":
+                        display_ms,
+                    "total_ms":
+                        round(total),
                 }
 
                 await ws.send_json(
                     {
-                        "type": "answer.done",
-                        "text": full,
-                        "metrics": metrics,
+                        "type":
+                            "answer.done",
+                        "text":
+                            full,
+                        "metrics":
+                            metrics,
                     }
                 )
 
                 print(
-                    f"ANSWER COMPLETE: {metrics}",
+                    "ANSWER COMPLETE: "
+                    f"{metrics}",
                     flush=True,
                 )
 
@@ -468,22 +1073,32 @@ async def glasses(ws: WebSocket):
                             display_estimate_ms,
                             total_ms
                         )
-                        VALUES(?,?,?,?,?,?,?,?,?)
+                        VALUES(
+                            ?,?,?,?,?,?,?,?,?
+                        )
                         """,
                         (
                             profile_id,
                             time.time(),
                             question,
-                            metrics["stt_ms"],
-                            metrics["retrieval_ms"],
+                            metrics[
+                                "stt_ms"
+                            ],
+                            metrics[
+                                "retrieval_ms"
+                            ],
                             metrics[
                                 "model_first_token_ms"
                             ],
-                            metrics["transport_ms"],
+                            metrics[
+                                "transport_ms"
+                            ],
                             metrics[
                                 "display_estimate_ms"
                             ],
-                            metrics["total_ms"],
+                            metrics[
+                                "total_ms"
+                            ],
                         ),
                     )
 
@@ -492,20 +1107,24 @@ async def glasses(ws: WebSocket):
                 await ws.send_json(
                     {
                         "type": "state",
-                        "state": "listening",
+                        "state":
+                            "listening",
                     }
                 )
 
             except asyncio.CancelledError:
                 print(
-                    "ANSWER GENERATION CANCELLED",
+                    "ANSWER GENERATION "
+                    "CANCELLED",
                     flush=True,
                 )
+
                 raise
 
             except Exception as e:
                 print(
-                    "ANSWER GENERATION ERROR:",
+                    "ANSWER GENERATION "
+                    "ERROR:",
                     repr(e),
                     flush=True,
                 )
@@ -513,15 +1132,19 @@ async def glasses(ws: WebSocket):
                 try:
                     await ws.send_json(
                         {
-                            "type": "error",
-                            "message": "Answer generation failed",
+                            "type":
+                                "error",
+                            "message":
+                                "Answer generation failed",
                         }
                     )
+
                 except Exception:
                     pass
 
+
         # --------------------------------------------------
-        # Receive OpenAI transcription events
+        # OpenAI STT event reader
         # --------------------------------------------------
 
         async def receive_stt():
@@ -530,30 +1153,46 @@ async def glasses(ws: WebSocket):
 
             try:
                 async for raw in transcription:
-                    msg = json.loads(raw)
-                    event_type = msg.get("type")
+                    msg = json.loads(
+                        raw
+                    )
+
+                    event_type = (
+                        msg.get("type")
+                    )
 
                     if event_type == "error":
                         print(
-                            "OPENAI REALTIME ERROR:",
-                            json.dumps(msg),
+                            "OPENAI REALTIME "
+                            "ERROR:",
+                            json.dumps(
+                                msg
+                            ),
                             flush=True,
                         )
+
                         continue
 
                     if (
                         event_type
-                        == "input_audio_buffer.speech_started"
+                        ==
+                        "input_audio_buffer."
+                        "speech_started"
                     ):
-                        started = time.perf_counter()
+                        started = (
+                            time.perf_counter()
+                        )
 
                         try:
                             await ws.send_json(
                                 {
-                                    "type": "state",
-                                    "state": "hearing speech",
+                                    "type":
+                                        "state",
+                                    "state":
+                                        "hearing speech",
                                 }
                             )
+
                         except Exception:
                             return
 
@@ -569,7 +1208,10 @@ async def glasses(ws: WebSocket):
                         continue
 
                     utterance = (
-                        msg.get("transcript", "")
+                        msg.get(
+                            "transcript",
+                            "",
+                        )
                         .strip()
                     )
 
@@ -577,22 +1219,31 @@ async def glasses(ws: WebSocket):
                         continue
 
                     print(
-                        f"TRANSCRIPT: {utterance}",
+                        "TRANSCRIPT: "
+                        f"{utterance}",
                         flush=True,
                     )
 
-                    if not is_question(utterance):
+                    if not is_question(
+                        utterance
+                    ):
                         try:
                             await ws.send_json(
                                 {
-                                    "type": "state",
-                                    "state": "listening",
+                                    "type":
+                                        "state",
+                                    "state":
+                                        "listening",
                                 }
                             )
+
                         except Exception:
                             return
 
-                        started = time.perf_counter()
+                        started = (
+                            time.perf_counter()
+                        )
+
                         continue
 
                     stt_ms = (
@@ -607,14 +1258,18 @@ async def glasses(ws: WebSocket):
                     ):
                         generate_task.cancel()
 
-                    generate_task = asyncio.create_task(
-                        generate(
-                            utterance,
-                            stt_ms,
+                    generate_task = (
+                        asyncio.create_task(
+                            generate(
+                                utterance,
+                                stt_ms,
+                            )
                         )
                     )
 
-                    started = time.perf_counter()
+                    started = (
+                        time.perf_counter()
+                    )
 
             except asyncio.CancelledError:
                 raise
@@ -628,15 +1283,20 @@ async def glasses(ws: WebSocket):
 
                 raise
 
+
         # --------------------------------------------------
-        # Start background STT reader
+        # Start STT reader
         # --------------------------------------------------
 
-        stt_task = asyncio.create_task(
-            receive_stt()
+        stt_task = (
+            asyncio.create_task(
+                receive_stt()
+            )
         )
 
-        def log_stt_result(task):
+        def log_stt_result(
+            task
+        ):
             try:
                 task.result()
 
@@ -654,35 +1314,46 @@ async def glasses(ws: WebSocket):
             log_stt_result
         )
 
+
         # --------------------------------------------------
-        # Receive audio / control messages from Even G2
+        # Receive G2 audio/control
         # --------------------------------------------------
 
         while True:
             event = await ws.receive()
 
-            event_type = event.get("type")
+            event_type = (
+                event.get("type")
+            )
 
-            # FastAPI returns a websocket.disconnect event
-            # before raising WebSocketDisconnect.
-            # Do not call receive() again after this.
-            if event_type == "websocket.disconnect":
+            if (
+                event_type
+                ==
+                "websocket.disconnect"
+            ):
                 print(
                     "G2 DISCONNECT EVENT:",
                     event.get("code"),
                     flush=True,
                 )
+
                 break
 
+
             # ----------------------------------------------
-            # Binary microphone audio
+            # Binary G2 microphone audio
             # ----------------------------------------------
 
-            audio_bytes = event.get("bytes")
+            audio_bytes = (
+                event.get("bytes")
+            )
 
             if audio_bytes:
                 try:
-                    pcm24, rate_state = audioop.ratecv(
+                    (
+                        pcm24,
+                        rate_state,
+                    ) = audioop.ratecv(
                         audio_bytes,
                         2,
                         1,
@@ -691,9 +1362,12 @@ async def glasses(ws: WebSocket):
                         rate_state,
                     )
 
-                    encoded = base64.b64encode(
-                        pcm24
-                    ).decode("ascii")
+                    encoded = (
+                        base64.b64encode(
+                            pcm24
+                        )
+                        .decode("ascii")
+                    )
 
                     await transcription.send(
                         json.dumps(
@@ -708,23 +1382,30 @@ async def glasses(ws: WebSocket):
 
                 except Exception as e:
                     print(
-                        "AUDIO FORWARD ERROR:",
+                        "AUDIO FORWARD "
+                        "ERROR:",
                         repr(e),
                         flush=True,
                     )
+
                     raise
 
                 continue
 
+
             # ----------------------------------------------
-            # JSON messages from G2 client
+            # JSON messages from G2
             # ----------------------------------------------
 
-            text = event.get("text")
+            text = event.get(
+                "text"
+            )
 
             if text:
                 try:
-                    msg = json.loads(text)
+                    msg = json.loads(
+                        text
+                    )
 
                 except json.JSONDecodeError:
                     print(
@@ -732,13 +1413,21 @@ async def glasses(ws: WebSocket):
                         text,
                         flush=True,
                     )
+
                     continue
 
-                msg_type = msg.get("type")
+                msg_type = (
+                    msg.get("type")
+                )
 
-                if msg_type == "display.ack":
+                if (
+                    msg_type
+                    == "display.ack"
+                ):
                     key = (
-                        msg.get("answer_id"),
+                        msg.get(
+                            "answer_id"
+                        ),
                         msg.get("seq"),
                     )
 
@@ -766,13 +1455,18 @@ async def glasses(ws: WebSocket):
                             )
                         )
 
-                elif msg_type == "ping":
+                elif (
+                    msg_type == "ping"
+                ):
                     await ws.send_json(
                         {
-                            "type": "pong",
-                            "time": time.time(),
+                            "type":
+                                "pong",
+                            "time":
+                                time.time(),
                         }
                     )
+
 
     except WebSocketDisconnect:
         print(
@@ -798,17 +1492,15 @@ async def glasses(ws: WebSocket):
             await ws.send_json(
                 {
                     "type": "error",
-                    "message": str(e),
+                    "message":
+                        str(e),
                 }
             )
+
         except Exception:
             pass
 
     finally:
-        # --------------------------------------------------
-        # Cleanup
-        # --------------------------------------------------
-
         if (
             generate_task
             and
@@ -826,14 +1518,17 @@ async def glasses(ws: WebSocket):
         if stt_task:
             try:
                 await stt_task
+
             except asyncio.CancelledError:
                 pass
+
             except Exception:
                 pass
 
         if transcription:
             try:
                 await transcription.close()
+
             except Exception:
                 pass
 
@@ -843,14 +1538,28 @@ async def glasses(ws: WebSocket):
         )
 
 
+# ============================================================
+# INTERVIEW LENS MANAGER HTML
+# ============================================================
+
 MANAGER_HTML = '''
 <!doctype html>
+
 <html>
+
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Interview Lens Manager</title>
+
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+>
+
+<title>
+Interview Lens Manager
+</title>
 
 <style>
+
 body{
     font:16px system-ui;
     background:#f1f5f1;
@@ -912,22 +1621,29 @@ button{
 pre{
     white-space:pre-wrap
 }
+
 </style>
+
 </head>
 
 <body>
 
 <div class="wrap">
 
-<h1>Interview Lens</h1>
+<h1>
+Interview Lens
+</h1>
 
 <p class="muted">
 Private profile and latency manager
 </p>
 
+
 <div class="card">
 
-<label>Access token</label>
+<label>
+Access token
+</label>
 
 <input
     id="token"
@@ -942,9 +1658,11 @@ Unlock
 
 </div>
 
+
 <div id="app"></div>
 
 </div>
+
 
 <script>
 
@@ -963,7 +1681,11 @@ const esc = s =>
 
 let state
 
-async function api(path, opts={}) {
+
+async function api(
+    path,
+    opts={}
+) {
 
     opts.headers = {
         ...(opts.headers || {}),
@@ -972,7 +1694,10 @@ async function api(path, opts={}) {
     }
 
     const r =
-        await fetch(path, opts)
+        await fetch(
+            path,
+            opts
+        )
 
     if (!r.ok)
         throw Error(
@@ -982,12 +1707,15 @@ async function api(path, opts={}) {
     return r.json()
 }
 
+
 async function load() {
 
     try {
 
         state =
-            await api('/api/state')
+            await api(
+                '/api/state'
+            )
 
         render()
 
@@ -1000,6 +1728,7 @@ async function load() {
             e.message
     }
 }
+
 
 function render() {
 
@@ -1016,11 +1745,17 @@ function render() {
         `
         <div class="card">
 
-        <h2>Interview profiles</h2>
+        <h2>
+        Interview profiles
+        </h2>
 
-        <h3>New profile</h3>
+        <h3>
+        New profile
+        </h3>
 
-        <form onsubmit="createP(event)">
+        <form
+            onsubmit="createP(event)"
+        >
 
         <input
             name="name"
@@ -1046,11 +1781,14 @@ function render() {
         return
     }
 
+
     $('#app').innerHTML =
     `
     <div class="card">
 
-    <h2>Interview profiles</h2>
+    <h2>
+    Interview profiles
+    </h2>
 
     ${
         state.profiles.map(
@@ -1066,7 +1804,9 @@ function render() {
         ).join('')
     }
 
-    <h3>New profile</h3>
+    <h3>
+    New profile
+    </h3>
 
     <form
         onsubmit="createP(event)"
@@ -1148,6 +1888,7 @@ function render() {
             d =>
             `
             <div class="pill">
+
             ${esc(d.kind)}
             ·
             ${esc(d.name)}
@@ -1236,6 +1977,7 @@ function render() {
     `
 }
 
+
 async function createP(e) {
 
     e.preventDefault()
@@ -1254,6 +1996,7 @@ async function createP(e) {
     load()
 }
 
+
 async function activate(id) {
 
     await api(
@@ -1268,7 +2011,11 @@ async function activate(id) {
     load()
 }
 
-async function upload(e,id) {
+
+async function upload(
+    e,
+    id
+) {
 
     e.preventDefault()
 
@@ -1288,6 +2035,7 @@ async function upload(e,id) {
     load()
 }
 
+
 async function del(id) {
 
     await api(
@@ -1304,5 +2052,6 @@ async function del(id) {
 </script>
 
 </body>
+
 </html>
 '''
