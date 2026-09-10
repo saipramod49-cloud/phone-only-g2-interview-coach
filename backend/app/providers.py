@@ -22,7 +22,7 @@ Your response must be:
 
 STYLE
 
-Answer like an experienced Data Engineer speaking in an interview.
+Answer like an experienced Data Engineer speaking naturally.
 
 Do not sound like:
 - documentation
@@ -49,53 +49,36 @@ Use first person naturally:
 
 LENGTH
 
-This is extremely important.
-
 Default answer:
-- 45 to 65 words
-- usually 3 short sentences
-- absolute maximum: 75 words
+- 40 to 60 words
+- usually 2 or 3 short sentences
+- absolute maximum: 65 words
 
-Do not exceed 75 words.
+Never exceed 65 words.
 
-Even if the question is broad, give only the most important points.
-
+For broad questions, give only the most important points.
 The interviewer can ask follow-up questions.
 
-Do not try to explain every possible detail.
-
-For a complex architecture or scenario question:
-1. give the main approach
-2. mention the most important technologies or checks
-3. finish with the validation, result, or recovery step
-
 CANDIDATE EVIDENCE
-
-CANDIDATE EVIDENCE may contain information from:
-- resume
-- professional profile
-- roles and responsibilities
-- project notes
-- job description
-- interview preparation documents
 
 When the question asks about:
 - my experience
 - my current project
-- my previous projects
+- previous projects
 - responsibilities
 - technologies I used
-- challenges I faced
 - production issues
+- challenges
 - implementation examples
 - achievements
 
 use CANDIDATE EVIDENCE as the primary source.
 
 Never invent:
-- employer names
-- client names
+- employers
+- clients
 - projects
+- incidents
 - dates
 - metrics
 - responsibilities
@@ -103,24 +86,21 @@ Never invent:
 - achievements
 - outcomes
 
-If there is enough evidence, answer confidently as the candidate.
+For experience questions, every concrete claim must be supported by
+CANDIDATE EVIDENCE.
 
-If evidence is incomplete, use only what is supported.
+If the evidence does not support a specific incident, do not create
+a hypothetical incident and present it as something I experienced.
 
-Do not say:
-"I don't have enough context"
-unless there is truly no relevant candidate evidence available.
+Instead, give the closest supported real example.
 
 GENERAL TECHNICAL QUESTIONS
 
-For general technical questions, answer using accurate technical
-knowledge even when candidate evidence is unavailable.
+For purely technical questions, use accurate general technical knowledge.
 
-Do not refuse a normal technical question because the evidence
-does not mention the technology.
+Candidate evidence is not required for conceptual questions.
 
-If relevant candidate evidence exists, connect it briefly to practical
-experience.
+If relevant experience exists in the evidence, connect it briefly.
 
 TECHNOLOGY NAMES
 
@@ -139,32 +119,25 @@ SCD Type II
 SQL
 PySpark
 
-Do not capitalize phrases merely for emphasis.
+Do not use uppercase words just for emphasis.
 
-Do not use Markdown bold.
-Do not use asterisks.
+Do not use Markdown.
 Do not use headings.
+Do not use bullets.
 Do not use tables.
 
 COMPARISON QUESTIONS
 
-For questions comparing two technologies:
-- state the main difference
-- explain one practical distinction
-- say when each is appropriate
+State:
+- the main difference
+- the most important practical distinction
+- when each is appropriate
 
-Keep the answer conversational.
+Keep it conversational.
 
 SCENARIO QUESTIONS
 
-For questions like:
-"How would you..."
-"Suppose..."
-"What if..."
-"How do you troubleshoot..."
-
-Use a simple sequence:
-
+Use a short natural sequence:
 "I'd first..."
 "Then..."
 "Finally..."
@@ -173,34 +146,22 @@ Mention only the most important actions.
 
 EXPERIENCE QUESTIONS
 
-For questions such as:
-"Tell me about your project"
-"Tell me about a challenge"
-"Give me an example"
-"What are your responsibilities?"
-
-Use this compact structure:
-
+Use:
 context -> what I did -> result
 
-Use only supported candidate evidence.
+Only use supported evidence.
 
 Do not repeat the interview question.
-
 Do not provide coaching commentary.
 
 Return only the answer the candidate should say.
 """.strip()
 
 
-MAX_WORDS = 72
+MAX_WORDS = 65
 
 
 def _clean_output(text: str) -> str:
-    """
-    Normalize model output for the Even glasses renderer.
-    """
-
     text = text.strip()
 
     text = text.replace("**", "")
@@ -219,18 +180,6 @@ def _clean_output(text: str) -> str:
     )
 
     text = re.sub(
-        r"[ \t]+",
-        " ",
-        text,
-    )
-
-    text = re.sub(
-        r"\n+",
-        " ",
-        text,
-    )
-
-    text = re.sub(
         r"\s+",
         " ",
         text,
@@ -243,11 +192,6 @@ def _limit_words(
     text: str,
     max_words: int = MAX_WORDS,
 ) -> str:
-    """
-    Hard-stop overly long responses so Even never receives a
-    large answer that is difficult to render.
-    """
-
     text = _clean_output(text)
 
     words = text.split()
@@ -259,19 +203,17 @@ def _limit_words(
         words[:max_words]
     )
 
-    # Prefer ending at the last complete sentence if it is not
-    # dramatically shorter.
-    last_period = max(
+    last_end = max(
         shortened.rfind("."),
         shortened.rfind("?"),
         shortened.rfind("!"),
     )
 
-    if last_period >= int(
-        len(shortened) * 0.65
+    if last_end >= int(
+        len(shortened) * 0.60
     ):
         shortened = shortened[
-            : last_period + 1
+            :last_end + 1
         ]
     else:
         shortened = (
@@ -286,52 +228,18 @@ def _limit_words(
 
 def _display_chunks(
     text: str,
-    target_size: int = 220,
 ):
     """
-    Send a very small number of larger chunks to Even.
+    Return the complete short answer as one display chunk.
 
-    This minimizes repeated renderer updates.
+    Even has shown instability when receiving multiple content
+    updates, so minimize renderer updates.
     """
 
-    text = _limit_words(
-        text
-    )
+    text = _limit_words(text)
 
-    if not text:
-        return
-
-    sentences = re.split(
-        r"(?<=[.!?])\s+",
-        text,
-    )
-
-    current = ""
-
-    for sentence in sentences:
-        sentence = sentence.strip()
-
-        if not sentence:
-            continue
-
-        candidate = (
-            f"{current} {sentence}".strip()
-            if current
-            else sentence
-        )
-
-        if (
-            current
-            and len(candidate)
-            > target_size
-        ):
-            yield current + " "
-            current = sentence
-        else:
-            current = candidate
-
-    if current:
-        yield current
+    if text:
+        yield text
 
 
 async def answer_stream(
@@ -344,11 +252,14 @@ async def answer_stream(
 
     model = os.getenv(
         "OPENAI_MODEL",
-        "gpt-5-mini",
+        "gpt-5.6-luna",
     )
 
     payload = {
         "model": model,
+        "reasoning": {
+            "effort": "none",
+        },
         "stream": True,
         "input": [
             {
@@ -363,13 +274,13 @@ async def answer_stream(
                     "CANDIDATE EVIDENCE:\n"
                     f"{evidence}\n\n"
                     "Answer exactly as the candidate "
-                    "should say it aloud.\n\n"
-                    "Important: keep the complete answer "
-                    "under 75 words."
+                    "should say it aloud.\n"
+                    "Keep the complete answer under "
+                    "65 words."
                 ),
             },
         ],
-        "max_output_tokens": 110,
+        "max_output_tokens": 220,
     }
 
     timeout = httpx.Timeout(
@@ -380,7 +291,7 @@ async def answer_stream(
     )
 
     async with httpx.AsyncClient(
-        timeout=timeout
+        timeout=timeout,
     ) as client:
 
         async with client.stream(
@@ -395,13 +306,8 @@ async def answer_stream(
             json=payload,
         ) as response:
 
-            if (
-                response.status_code
-                >= 400
-            ):
-                body = await (
-                    response.aread()
-                )
+            if response.status_code >= 400:
+                body = await response.aread()
 
                 body_text = body.decode(
                     "utf-8",
@@ -409,31 +315,26 @@ async def answer_stream(
                 )
 
                 print(
-                    "OPENAI RESPONSES API "
-                    "ERROR STATUS:",
+                    "OPENAI RESPONSES API ERROR STATUS:",
                     response.status_code,
                     flush=True,
                 )
 
                 print(
-                    "OPENAI RESPONSES API "
-                    "ERROR BODY:",
+                    "OPENAI RESPONSES API ERROR BODY:",
                     body_text,
                     flush=True,
                 )
 
                 raise RuntimeError(
-                    "OpenAI Responses API "
-                    "failed: "
+                    "OpenAI Responses API failed: "
                     f"{response.status_code} "
                     f"{body_text}"
                 )
 
             full = ""
 
-            async for line in (
-                response.aiter_lines()
-            ):
+            async for line in response.aiter_lines():
 
                 if not line.startswith(
                     "data: "
@@ -449,9 +350,7 @@ async def answer_stream(
                     event = json.loads(
                         data
                     )
-                except (
-                    json.JSONDecodeError
-                ):
+                except json.JSONDecodeError:
                     continue
 
                 if (
@@ -471,10 +370,13 @@ async def answer_stream(
                 full
             )
 
-            for chunk in (
-                _display_chunks(
-                    full
+            if not full:
+                raise RuntimeError(
+                    "OpenAI returned an empty answer"
                 )
+
+            for chunk in _display_chunks(
+                full
             ):
                 yield chunk
 
