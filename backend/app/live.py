@@ -1,4 +1,4 @@
-"""Versioned live-practice protocol. Capture is explicitly armed for each question."""
+"""Versioned live-practice protocol. Capture supports one-question and continuous question modes."""
 from __future__ import annotations
 
 import asyncio
@@ -8,6 +8,8 @@ import hmac
 import json
 import os
 import uuid
+from collections import deque
+from .turns import question_candidate
 from contextlib import suppress
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -35,6 +37,8 @@ async def live(ws: WebSocket):
     manual_finish = False
     last_question = ""
     output_language = "english"
+    continuous = False
+    submitted_items = deque(maxlen=256)
 
     def cancel_endpoint():
         nonlocal endpoint
@@ -45,7 +49,7 @@ async def live(ws: WebSocket):
     def question_text():
         return ' '.join(text for text in segments.values() if text).strip()
 
-    async def finish_question():
+    async def finish_question(force=False):
         nonlocal listening, generation
         if not listening or speaking or any(k not in completed_items for k in segments):
             await send('state', message='Waiting for speech transcription to finish…')
@@ -54,9 +58,21 @@ async def live(ws: WebSocket):
         if not question:
             await send('state', message='No question captured yet. Keep speaking.')
             return
-        listening = False
         cancel_endpoint()
-        await send('capture', active=False)
+        if continuous:
+            submitted_items.extend(segments)
+            segments.clear()
+            completed_items.clear()
+            if not force and not question_candidate(question):
+                await send('state', message='Still listening. Speech did not look like a new question; last answer retained.')
+                return
+        else:
+            listening = False
+            await send('capture', active=False)
+        if generation and not generation.done():
+            generation.cancel()
+            with suppress(asyncio.CancelledError):
+                await generation
         await send('transcript.final', text=question)
         generation = asyncio.create_task(generate(question))
 
@@ -112,7 +128,7 @@ async def live(ws: WebSocket):
         except asyncio.CancelledError:
             raise
         except Exception:
-            await send('error', message='Answer failed. Check the Render logs and OpenAI configuration; tap Next question to retry.')
+            await send('error', keep_capture=continuous and listening, message='Answer failed. Use Retry last answer. Listening continues if the microphone indicator is on.')
 
     async def read_stt(connection):
         nonlocal listening, speaking
@@ -125,6 +141,8 @@ async def live(ws: WebSocket):
                 if not listening:
                     continue
                 item = event.get('item_id', 'legacy')
+                if continuous and item in submitted_items:
+                    continue
                 if kind == 'input_audio_buffer.speech_started':
                     cancel_endpoint()
                     speaking = True
@@ -173,7 +191,7 @@ async def live(ws: WebSocket):
         if hello.get('type') != 'auth':
             await ws.close(code=1008, reason='Authentication required')
             return
-        await send('ready', protocol=1)
+        await send('ready', protocol=1, build='0.2.4', features=['continuous_questions','preparation','display_settings'])
         while True:
             event = await ws.receive()
             if event['type'] == 'websocket.disconnect':
@@ -198,12 +216,12 @@ async def live(ws: WebSocket):
                 if selected_language not in ('english', 'telugu_latin'):
                     await send('state', message='Choose English or Romanized Telugu for lens answers.')
                     continue
-                if not listening and not (generation and not generation.done()):
+                if not speaking and not (generation and not generation.done()):
                     output_language = selected_language
             if kind == 'ping':
                 await send('pong')
             elif kind == 'retry':
-                if listening or (generation and not generation.done()):
+                if (listening and (not continuous or speaking or segments)) or (generation and not generation.done()):
                     await send('state', message='Finish or pause capture and wait for the current answer before retrying.')
                 elif last_question:
                     if len(history) >= 2 and history[-2] == f'user: {last_question}':
@@ -212,7 +230,7 @@ async def live(ws: WebSocket):
                 else:
                     await send('state', message='No question in this connection yet. Choose Listen and repeat your question.')
             elif kind == 'finish':
-                await finish_question()
+                await finish_question(force=True)
             elif kind == 'pause':
                 await close_capture()
                 await send('capture', active=False)
@@ -226,6 +244,8 @@ async def live(ws: WebSocket):
                     completed_items.clear()
                     speaking = False
                     manual_finish = message.get('manual_finish') is True
+                    continuous = message.get('continuous') is True and not manual_finish
+                    submitted_items.clear()
                     stt = await openai_transcription_session()
                     listening = True
                     reader = asyncio.create_task(read_stt(stt))
