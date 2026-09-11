@@ -8,16 +8,30 @@ import hmac
 import json
 import os
 import uuid
+import time
 from collections import deque
 from .turns import question_candidate
+from .speakers import SpeakerTimeline
+from .models import account_models, resolve_model, AnswerModelError
 from contextlib import suppress
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from .providers import answer_stream, openai_transcription_session, transcription_diagnostic
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Header, HTTPException
+from .providers import answer_stream, openai_transcription_session, transcription_diagnostic, align_candidate_speech
 from .retrieval import search
 from .storage import active_profile, chunks_for, connect
 
 router = APIRouter()
+
+@router.get('/api/models')
+async def list_answer_models(x_app_token: str | None = Header(None)):
+    expected=os.getenv('APP_TOKEN','')
+    if not expected or not isinstance(x_app_token,str) or not hmac.compare_digest(expected,x_app_token):
+        raise HTTPException(status_code=401,detail='Invalid app access token')
+    try:
+        return {'models':await account_models(),'note':'Listed IDs are not proof of Responses API compatibility.'}
+    except AnswerModelError as error:
+        raise HTTPException(status_code=502,detail=str(error)) from None
+
 
 
 @router.websocket('/ws/live')
@@ -39,6 +53,19 @@ async def live(ws: WebSocket):
     output_language = "english"
     continuous = False
     submitted_items = deque(maxlen=256)
+    timeline = SpeakerTimeline()
+    frame_role = 'unknown'
+    starts = {}
+    ends = {}
+    item_roles = {}
+    speaker_gate = False
+    voice_follow = False
+    alignment = None
+    current_answer = ''
+    current_answer_id = ''
+    answer_model = None
+    answer_effort = "auto"
+    stt_started = 0.0
 
     def cancel_endpoint():
         nonlocal endpoint
@@ -60,11 +87,12 @@ async def live(ws: WebSocket):
             return
         cancel_endpoint()
         if continuous:
+            roles = {item_roles.get(k, 'unknown') for k in segments}
             submitted_items.extend(segments)
             segments.clear()
             completed_items.clear()
-            if not force and not question_candidate(question):
-                await send('state', message='Still listening. Speech did not look like a new question; last answer retained.')
+            if not force and ((speaker_gate and roles != {'interviewer'}) or (not speaker_gate and not question_candidate(question))):
+                await send('state', message='Still listening. Speaker or question was not clear; last answer retained. Use manual Interviewer mode if needed.')
                 return
         else:
             listening = False
@@ -86,7 +114,7 @@ async def live(ws: WebSocket):
     def schedule_endpoint():
         nonlocal endpoint
         cancel_endpoint()
-        if not manual_finish and not speaking and all(k in completed_items for k in segments):
+        if segments and not manual_finish and not speaking and all(k in completed_items for k in segments):
             endpoint = asyncio.create_task(finish_after_quiet())
     send_lock = asyncio.Lock()
 
@@ -109,29 +137,58 @@ async def live(ws: WebSocket):
         rate_state = None
 
     async def generate(question):
-        nonlocal last_question
+        nonlocal last_question, current_answer, current_answer_id
         last_question = question
+        requested_model, requested_effort = answer_model, answer_effort
+        selected_output_language = output_language
+        request_started = time.monotonic()
+        first_delta = True
+        first_text_ms = None
         try:
+            selected_answer_model, selected_effort = resolve_model(requested_model, requested_effort)
             with connect() as db:
                 profile = active_profile(db)
-                evidence = search(chunks_for(db, profile['id']), question) if profile else []
+                chunks = chunks_for(db, profile['id']) if profile else []
+                evidence = search(chunks, question)
+                if not evidence:
+                    evidence = chunks[:7]
             grounded = '\n\n'.join(f'[{c.source}] {c.text}' for c in evidence)
             answer_id = uuid.uuid4().hex
-            await send('answer.start', answer_id=answer_id, question=question)
+            current_answer_id = answer_id
+            current_answer = ''
+            await send('answer.start', answer_id=answer_id, question=question, model=selected_answer_model, reasoning=selected_effort or 'API default')
             full = ''
-            async for delta in answer_stream(question, grounded, '\n'.join(history[-12:])[-16000:], output_language):
+            async for delta in answer_stream(question, grounded, '\n'.join(history[-12:])[-16000:], selected_output_language, selected_answer_model, selected_effort or "default"):
                 full += delta
-                await send('answer.delta', answer_id=answer_id, text=delta)
+                current_answer = full
+                if first_delta:
+                    first_delta = False
+                    first_text_ms=round((time.monotonic()-request_started)*1000)
+                    print('LIVE_ANSWER_FIRST_TEXT_MS',first_text_ms,flush=True)
+                await send('answer.delta', answer_id=answer_id, text=delta, first_text_ms=first_text_ms)
             history.extend([f'user: {question}', f'assistant: {full}'])
             del history[:-12]
-            await send('answer.done', answer_id=answer_id, text=full)
+            await send('answer.done', answer_id=answer_id, text=full, first_text_ms=first_text_ms, total_ms=round((time.monotonic()-request_started)*1000))
         except asyncio.CancelledError:
             raise
+        except AnswerModelError as error:
+            await send('error', keep_capture=continuous and listening, message=str(error))
         except Exception:
             await send('error', keep_capture=continuous and listening, message='Answer failed. Use Retry last answer. Listening continues if the microphone indicator is on.')
 
+    async def follow(spoken, answer, answer_id):
+        try:
+            quote = await align_candidate_speech(spoken, answer)
+            if quote and voice_follow and answer_id == current_answer_id:
+                await send('follow', answer_id=answer_id, quote=quote)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            print('LIVE_ALIGNMENT_FAILED '+transcription_diagnostic(error),flush=True)
+            await send('follow.state', message='Could not match speech. Holding the page; ring scrolling is available.')
+
     async def read_stt(connection):
-        nonlocal listening, speaking
+        nonlocal listening, speaking, alignment
         try:
             async for raw in connection:
                 event = json.loads(raw)
@@ -147,8 +204,11 @@ async def live(ws: WebSocket):
                     cancel_endpoint()
                     speaking = True
                     segments.setdefault(item, '')
+                    starts[item] = event.get('audio_start_ms', timeline.offset)
                 elif kind == 'input_audio_buffer.speech_stopped':
                     speaking = False
+                    ends[item] = event.get('audio_end_ms', timeline.offset)
+                    item_roles[item] = timeline.role(starts.get(item),ends[item])
                     segments.setdefault(item, '')
                     schedule_endpoint()
                 elif kind == 'input_audio_buffer.committed':
@@ -159,14 +219,34 @@ async def live(ws: WebSocket):
                         continue
                     cancel_endpoint()
                     segments[item] = segments.get(item, '') + event.get('delta', '')
-                    await send('transcript.partial', text=question_text())
+                    role = item_roles.get(item, timeline.role(starts.get(item),timeline.offset))
+                    if role != 'candidate':
+                        await send('transcript.partial', text=question_text())
                 elif kind == 'conversation.item.input_audio_transcription.completed':
                     if item in completed_items:
                         continue
-                    segments[item] = event.get('transcript', '').strip()
+                    transcript = event.get('transcript', '').strip()
+                    role = item_roles.get(item, timeline.role(starts.get(item),ends.get(item)))
+                    if role == 'candidate':
+                        segments.pop(item,None)
+                        completed_items.discard(item)
+                        submitted_items.append(item)
+                        await send('candidate.transcript', text=transcript)
+                        if voice_follow and current_answer:
+                            if alignment:
+                                alignment.cancel()
+                            alignment = asyncio.create_task(follow(transcript,current_answer,current_answer_id))
+                        schedule_endpoint()
+                        continue
+                    segments[item] = transcript
                     completed_items.add(item)
                     await send('transcript.partial', text=question_text())
                     schedule_endpoint()
+                for mapping in (starts, ends, item_roles):
+                    if len(mapping)>512:
+                        for key in list(mapping):
+                            if key not in segments:
+                                mapping.pop(key,None)
                 if len(question_text()) > 12000 or len(segments) > 100:
                     raise RuntimeError('Question capture limit exceeded')
             if listening:
@@ -177,7 +257,7 @@ async def live(ws: WebSocket):
             listening = False
             cancel_endpoint()
             await send('capture', active=False)
-            await send('error', message='Transcription stopped or question exceeded the capture limit. Captured text is retained; tap Next question to retry.')
+            await send('error', recoverable=True, message='Transcription stopped or question exceeded the capture limit. Captured text is retained; tap Next question to retry.')
         finally:
             await connection.close()
 
@@ -191,7 +271,7 @@ async def live(ws: WebSocket):
         if hello.get('type') != 'auth':
             await ws.close(code=1008, reason='Authentication required')
             return
-        await send('ready', protocol=1, build='0.2.4', features=['continuous_questions','preparation','display_settings'])
+        await send('ready', protocol=1, build='0.2.6', features=['continuous_questions','preparation','display_settings','speaker_follow','model_selection','all_models'])
         while True:
             event = await ws.receive()
             if event['type'] == 'websocket.disconnect':
@@ -202,6 +282,7 @@ async def live(ws: WebSocket):
                     await ws.close(code=1009, reason='Invalid PCM frame')
                     break
                 if listening and stt and audio:
+                    timeline.append(len(audio), frame_role)
                     pcm, rate_state = audioop.ratecv(audio, 2, 1, 16000, 24000, rate_state)
                     await stt.send(json.dumps({'type': 'input_audio_buffer.append', 'audio': base64.b64encode(pcm).decode('ascii')}))
                 continue
@@ -211,15 +292,51 @@ async def live(ws: WebSocket):
                 break
             message = json.loads(raw)
             kind = message.get('type')
-            if kind in ('listen', 'retry'):
+            if kind == 'speaker':
+                role = message.get('role')
+                frame_role = role if role in ('candidate','interviewer') else 'unknown'
+                continue
+            if kind == 'follow.mode':
+                voice_follow = message.get('enabled') is True
+                if not voice_follow and alignment:
+                    alignment.cancel()
+                continue
+            if kind in ('listen', 'retry', 'settings'):
+                selected_model = message.get('model') or None
+                selected_effort = message.get('reasoning_effort','auto')
+                try:
+                    resolve_model(selected_model,selected_effort)
+                except ValueError as error:
+                    await send('state',message=str(error))
+                    continue
                 selected_language = message.get('output_language', 'english')
                 if selected_language not in ('english', 'telugu_latin'):
                     await send('state', message='Choose English or Romanized Telugu for lens answers.')
                     continue
-                if not speaking and not (generation and not generation.done()):
+                if kind == 'settings' or (not speaking and not (generation and not generation.done())):
                     output_language = selected_language
+                    answer_model = selected_model
+                    answer_effort = selected_effort
+                if kind == 'settings':
+                    await send('state',message='Model and language saved for the next answer; microphone unchanged.')
+                    continue
             if kind == 'ping':
                 await send('pong')
+                if continuous and listening and not speaking and not segments and time.monotonic()-stt_started>2700:
+                    await send('state',message='Renewing transcription session; a brief capture gap is possible.')
+                    await close_capture()
+                    await send('capture',active=False)
+                    try:
+                        timeline = SpeakerTimeline()
+                        starts.clear(); ends.clear(); item_roles.clear(); submitted_items.clear()
+                        stt = await openai_transcription_session()
+                        stt_started = time.monotonic()
+                        listening = True
+                        reader = asyncio.create_task(read_stt(stt))
+                        await send('capture',active=True)
+                    except Exception as error:
+                        print('LIVE_RENEWAL_FAILED '+transcription_diagnostic(error),flush=True)
+                        await send('error',recoverable=True,message='Session renewal failed. Reconnecting transcription.')
             elif kind == 'retry':
                 if (listening and (not continuous or speaking or segments)) or (generation and not generation.done()):
                     await send('state', message='Finish or pause capture and wait for the current answer before retrying.')
@@ -235,7 +352,7 @@ async def live(ws: WebSocket):
                 await close_capture()
                 await send('capture', active=False)
             elif kind == 'listen':
-                if generation and not generation.done():
+                if generation and not generation.done() and message.get('continuous') is not True:
                     await send('state', message='Finishing the current answer')
                     continue
                 await close_capture()
@@ -245,8 +362,13 @@ async def live(ws: WebSocket):
                     speaking = False
                     manual_finish = message.get('manual_finish') is True
                     continuous = message.get('continuous') is True and not manual_finish
+                    speaker_gate = message.get('speaker_gate') is True
+                    voice_follow = message.get('voice_follow') is True
+                    timeline = SpeakerTimeline()
+                    starts.clear(); ends.clear(); item_roles.clear()
                     submitted_items.clear()
                     stt = await openai_transcription_session()
+                    stt_started = time.monotonic()
                     listening = True
                     reader = asyncio.create_task(read_stt(stt))
                     await send('capture', active=True)
@@ -264,6 +386,10 @@ async def live(ws: WebSocket):
     finally:
         with suppress(Exception):
             await close_capture()
+        if alignment:
+            alignment.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await alignment
         if generation:
             generation.cancel()
             with suppress(asyncio.CancelledError, Exception):

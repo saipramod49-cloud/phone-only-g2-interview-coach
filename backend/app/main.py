@@ -4,6 +4,7 @@ import asyncio
 import audioop
 import base64
 import io
+import hmac
 import json
 import os
 import time
@@ -57,7 +58,7 @@ def auth(token: str | None):
             detail="APP_TOKEN is not configured",
         )
 
-    if token != expected:
+    if not isinstance(token, str) or not hmac.compare_digest(token, expected):
         raise HTTPException(
             status_code=401,
             detail="Invalid access token",
@@ -316,15 +317,9 @@ async def chat_completions(
         question
     )
 
-    print(
-        f"AGENT QUESTION: {question}",
-        flush=True,
-    )
+    print('LEGACY_DIAGNOSTIC', flush=True)
 
-    print(
-        f"AGENT PROFILE: {profile['name']}",
-        flush=True,
-    )
+    print('LEGACY_DIAGNOSTIC', flush=True)
 
     # Retain recent context, excluding the newest user question already supplied.
     history = []
@@ -459,18 +454,10 @@ async def chat_completions(
 
                 yield "data: [DONE]\n\n"
 
-                print(
-                    "AGENT ANSWER COMPLETE:",
-                    full,
-                    flush=True,
-                )
+                print('AGENT ANSWER COMPLETE:', flush=True)
 
             except Exception as e:
-                print(
-                    "AGENT STREAM ERROR:",
-                    repr(e),
-                    flush=True,
-                )
+                print('AGENT STREAM ERROR:', flush=True)
 
                 error_payload = {
                     "error": {
@@ -520,11 +507,7 @@ async def chat_completions(
         ):
             full += delta
 
-        print(
-            "AGENT ANSWER COMPLETE:",
-            full,
-            flush=True,
-        )
+        print('AGENT ANSWER COMPLETE:', flush=True)
 
         return {
             "id": completion_id,
@@ -549,11 +532,7 @@ async def chat_completions(
         }
 
     except Exception as e:
-        print(
-            "AGENT ANSWER ERROR:",
-            repr(e),
-            flush=True,
-        )
+        print('AGENT ANSWER ERROR:', flush=True)
 
         raise HTTPException(
             status_code=502,
@@ -693,7 +672,7 @@ async def upload(
             detail="File exceeds 8 MB",
         )
 
-    if kind not in ("resume", "notes", "project", "responsibilities"):
+    if kind not in ("resume", "notes", "project", "responsibilities", "professional profile", "roles and responsibilities", "project notes", "prep notes", "project details", "other evidence"):
         raise HTTPException(status_code=422, detail="Unsupported document type")
     try:
         text = extract(file.filename or "upload.txt", data).strip()
@@ -859,11 +838,7 @@ async def glasses(
             }
         )
 
-        print(
-            f"ACTIVE PROFILE: "
-            f"{profile_name}",
-            flush=True,
-        )
+        print('LEGACY_DIAGNOSTIC', flush=True)
 
 
         # --------------------------------------------------
@@ -922,11 +897,7 @@ async def glasses(
                     }
                 )
 
-                print(
-                    f"QUESTION: "
-                    f"{question}",
-                    flush=True,
-                )
+                print('LEGACY_DIAGNOSTIC', flush=True)
 
                 with connect() as db:
                     evidence = search(
@@ -1077,11 +1048,7 @@ async def glasses(
                     }
                 )
 
-                print(
-                    "ANSWER COMPLETE: "
-                    f"{metrics}",
-                    flush=True,
-                )
+                print('LEGACY_DIAGNOSTIC', flush=True)
 
                 with connect() as db:
                     db.execute(
@@ -1146,12 +1113,7 @@ async def glasses(
                 raise
 
             except Exception as e:
-                print(
-                    "ANSWER GENERATION "
-                    "ERROR:",
-                    repr(e),
-                    flush=True,
-                )
+                print('ANSWER GENERATION ERROR:', flush=True)
 
                 try:
                     await ws.send_json(
@@ -1186,14 +1148,7 @@ async def glasses(
                     )
 
                     if event_type == "error":
-                        print(
-                            "OPENAI REALTIME "
-                            "ERROR:",
-                            json.dumps(
-                                msg
-                            ),
-                            flush=True,
-                        )
+                        print('OPENAI REALTIME ERROR:', flush=True)
 
                         continue
 
@@ -1242,11 +1197,7 @@ async def glasses(
                     if not utterance:
                         continue
 
-                    print(
-                        "TRANSCRIPT: "
-                        f"{utterance}",
-                        flush=True,
-                    )
+                    print('LEGACY_DIAGNOSTIC', flush=True)
 
                     if not is_question(
                         utterance
@@ -1299,11 +1250,7 @@ async def glasses(
                 raise
 
             except Exception as e:
-                print(
-                    "STT RECEIVE ERROR:",
-                    repr(e),
-                    flush=True,
-                )
+                print('STT RECEIVE ERROR:', flush=True)
 
                 raise
 
@@ -1328,11 +1275,7 @@ async def glasses(
                 pass
 
             except Exception as e:
-                print(
-                    "STT TASK ERROR:",
-                    repr(e),
-                    flush=True,
-                )
+                print('STT TASK ERROR:', flush=True)
 
         stt_task.add_done_callback(
             log_stt_result
@@ -1355,11 +1298,7 @@ async def glasses(
                 ==
                 "websocket.disconnect"
             ):
-                print(
-                    "G2 DISCONNECT EVENT:",
-                    event.get("code"),
-                    flush=True,
-                )
+                print('G2 DISCONNECT EVENT:', flush=True)
 
                 break
 
@@ -1405,12 +1344,7 @@ async def glasses(
                     )
 
                 except Exception as e:
-                    print(
-                        "AUDIO FORWARD "
-                        "ERROR:",
-                        repr(e),
-                        flush=True,
-                    )
+                    print('AUDIO FORWARD ERROR:', flush=True)
 
                     raise
 
@@ -1432,11 +1366,7 @@ async def glasses(
                     )
 
                 except json.JSONDecodeError:
-                    print(
-                        "INVALID CLIENT JSON:",
-                        text,
-                        flush=True,
-                    )
+                    print('INVALID CLIENT JSON:', flush=True)
 
                     continue
 
@@ -1499,18 +1429,10 @@ async def glasses(
         )
 
     except RuntimeError as e:
-        print(
-            "WEBSOCKET RUNTIME ERROR:",
-            repr(e),
-            flush=True,
-        )
+        print('WEBSOCKET RUNTIME ERROR:', flush=True)
 
     except Exception as e:
-        print(
-            "GLASSES WEBSOCKET ERROR:",
-            repr(e),
-            flush=True,
-        )
+        print('GLASSES WEBSOCKET ERROR:', flush=True)
 
         try:
             await ws.send_json(
