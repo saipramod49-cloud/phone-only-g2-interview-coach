@@ -304,6 +304,7 @@ async def answer_stream(
     question: str,
     evidence: str,
     conversation_context: str = "",
+    output_language: str = "english",
 ):
     key = os.environ[
         "OPENAI_API_KEY"
@@ -314,13 +315,21 @@ async def answer_stream(
         "gpt-5-mini",
     )
 
+    language_instruction = (
+        "Answer in natural spoken Telugu written ONLY with basic Latin letters (Romanized Telugu). "
+        "For example: Nenu munduga data ni validate chestanu. "
+        "Keep technical names such as BigQuery, SQL and CDC in English. "
+        "Do not output Telugu-script characters or transliteration diacritics."
+        if output_language == "telugu_latin" else
+        "Answer in English, even when the question is spoken or written in Telugu or another language."
+    )
     payload = {
         "model": model,
         "stream": True,
         "input": [
             {
                 "role": "system",
-                "content": SYSTEM,
+                "content": SYSTEM + "\n\nOUTPUT LANGUAGE\n" + language_instruction,
             },
             {
                 "role": "user",
@@ -495,8 +504,6 @@ async def openai_transcription_session():
                     "transcription": {
                         "model":
                             "gpt-4o-mini-transcribe",
-                        "language":
-                            "en",
                     },
                     "turn_detection": {
                         "type":

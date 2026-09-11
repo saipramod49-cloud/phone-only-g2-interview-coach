@@ -1,6 +1,7 @@
 import {connectG2} from './g2';
 import {LiveState} from './live-state';
 import './style.css';
+import {lensSafeFrame} from './language';
 import {RingMenu} from './ring-menu';
 import {mountPreparation} from './preparation';
 import {mountDisplay,geometry,defaultDisplay} from './display-settings';
@@ -13,6 +14,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML=`
 <p>Ask your complete question. Short pauses are combined; after a quiet pause, your answer starts. Choose manual finish for longer pauses.</p>
 <label>App access token <input id="token" type="password" autocomplete="off" placeholder="Your Render APP_TOKEN"></label>
 <p>Your OpenAI key stays on Render. This token is kept only while this page is open.</p>
+<label>Answer language<select id="answer-language"><option value="english">English</option><option value="telugu_latin">Telugu in English letters</option></select></label>
+<p>Ask in Telugu, English, or a mix. Lens answers use English or Romanized Telugu. Original question text stays visible on the phone. A language change applies to the next question or Retry last answer.</p>
 <label><input id="manual" type="checkbox"> Manual finish — wait until I tap Finish question</label>
 <button id="finish" disabled>Finish question</button>
 <h2>Captured question</h2><p id="transcript" aria-live="polite">No question captured yet.</p>
@@ -32,8 +35,8 @@ let active=false, busy=false, capture=false, armed=false, epoch=0;
 let ping:ReturnType<typeof setInterval>|undefined;
 let connectionTimer:ReturnType<typeof setTimeout>|undefined;
 const status=(s:string)=>{$('#status').textContent=s;};
-function render(){const f=menu.open?menu.frame():state.frame();$('#frame').textContent=f;g2?.layout(menu.open?{x:0,y:0,width:576,height:288}:geometry(display));g2?.show(f);$('#finish').toggleAttribute('disabled',!armed||busy);$('#next').toggleAttribute('disabled',!active||busy||armed);$('#pause').toggleAttribute('disabled',!active);}
-function send(type:string){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type,manual_finish:$<HTMLInputElement>('#manual').checked}));}
+function render(){const f=menu.open?menu.frame():state.frame();$('#frame').textContent=f;g2?.layout(menu.open?{x:0,y:0,width:576,height:288}:geometry(display));g2?.show(lensSafeFrame(f));$('#finish').toggleAttribute('disabled',!armed||busy);$('#next').toggleAttribute('disabled',!active||busy||armed);$('#pause').toggleAttribute('disabled',!active);}
+function send(type:string){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type,manual_finish:$<HTMLInputElement>('#manual').checked,output_language:$<HTMLSelectElement>('#answer-language').value}));}
 // Serialize mic changes so an old enable cannot win after Stop/Pause.
 let micQueue=Promise.resolve();
 function mic(on:boolean){
@@ -109,6 +112,9 @@ function runAction(action:string){
 }
 $('#actions').onclick=()=>{menu.open=!menu.open;render();};
 $('#retry').onclick=()=>runAction('retry');$('#reconnect').onclick=()=>runAction('reconnect');
+const languageSelect=$<HTMLSelectElement>('#answer-language');
+try{const saved=localStorage.getItem('coach-answer-language');if(saved==='english'||saved==='telugu_latin')languageSelect.value=saved;}catch{}
+languageSelect.onchange=()=>{try{localStorage.setItem('coach-answer-language',languageSelect.value);}catch{}status('Language saved. Use Next question or Retry last answer to apply.');};
 mountPreparation(HOST,()=>$<HTMLInputElement>('#token').value.trim());
 mountDisplay(value=>{display=value;state.wordsPerLine=value.words;state.linesPerPage=value.lines;state.charsPerLine=Math.max(20,Math.floor(value.width/576*38));state.page=0;render();});
 window.addEventListener('pagehide',stop);render();

@@ -25,7 +25,7 @@ def test_live_audio_stream_context_and_auth(monkeypatch):
     sessions=[];contexts=[]
     async def connect():
         session=FakeSTT();sessions.append(session);return session
-    async def answer(question,evidence,context):
+    async def answer(question, evidence, context, output_language="english"):
         contexts.append(context)
         yield 'Use '
         yield 'CDC.'
@@ -110,7 +110,7 @@ def test_multipart_capture_waits_for_pending_and_orders_finals(monkeypatch):
             for event in events:
                 await self.queue.put(json.dumps(event))
     async def connect(): return Multipart()
-    async def answer(question, evidence, context):
+    async def answer(question, evidence, context, output_language="english"):
         questions.append(question)
         yield 'Both parts.'
     with patch('app.live.openai_transcription_session',connect), patch('app.live.answer_stream',answer), TestClient(app) as client:
@@ -137,7 +137,7 @@ def test_pause_cancels_pending_question(monkeypatch):
     monkeypatch.setenv('APP_TOKEN', 'test-token')
     questions=[]
     async def connect(): return FakeSTT()
-    async def answer(question,evidence,context):
+    async def answer(question, evidence, context, output_language="english"):
         questions.append(question)
         yield 'Unexpected'
     with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),TestClient(app) as client:
@@ -170,7 +170,7 @@ def test_second_clause_resets_auto_finish(monkeypatch):
             ]:
                 await self.queue.put(json.dumps(event))
     async def connect():return TwoParts()
-    async def answer(question,evidence,context):
+    async def answer(question, evidence, context, output_language="english"):
         questions.append(question)
         yield 'Combined answer'
     with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),TestClient(app) as client:
@@ -196,7 +196,7 @@ def test_retry_reuses_question_without_more_audio(monkeypatch):
     questions=[];contexts=[];sessions=[]
     async def connect():
         session=FakeSTT();sessions.append(session);return session
-    async def answer(question,evidence,context):
+    async def answer(question, evidence, context, output_language="english"):
         questions.append(question);contexts.append(context)
         yield 'Retryable answer'
     with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),TestClient(app) as client:

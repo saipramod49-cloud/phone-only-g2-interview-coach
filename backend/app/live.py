@@ -34,6 +34,7 @@ async def live(ws: WebSocket):
     quiet_seconds = 2.0
     manual_finish = False
     last_question = ""
+    output_language = "english"
 
     def cancel_endpoint():
         nonlocal endpoint
@@ -102,7 +103,7 @@ async def live(ws: WebSocket):
             answer_id = uuid.uuid4().hex
             await send('answer.start', answer_id=answer_id, question=question)
             full = ''
-            async for delta in answer_stream(question, grounded, '\n'.join(history[-12:])[-16000:]):
+            async for delta in answer_stream(question, grounded, '\n'.join(history[-12:])[-16000:], output_language):
                 full += delta
                 await send('answer.delta', answer_id=answer_id, text=delta)
             history.extend([f'user: {question}', f'assistant: {full}'])
@@ -192,6 +193,13 @@ async def live(ws: WebSocket):
                 break
             message = json.loads(raw)
             kind = message.get('type')
+            if kind in ('listen', 'retry'):
+                selected_language = message.get('output_language', 'english')
+                if selected_language not in ('english', 'telugu_latin'):
+                    await send('state', message='Choose English or Romanized Telugu for lens answers.')
+                    continue
+                if not listening and not (generation and not generation.done()):
+                    output_language = selected_language
             if kind == 'ping':
                 await send('pong')
             elif kind == 'retry':
