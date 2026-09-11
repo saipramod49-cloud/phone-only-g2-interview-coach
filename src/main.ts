@@ -1,8 +1,13 @@
 import {connectG2} from './g2';
 import {LiveState} from './live-state';
 import './style.css';
+import {RingMenu} from './ring-menu';
+import {mountPreparation} from './preparation';
+import {mountDisplay,geometry,defaultDisplay} from './display-settings';
 const HOST='phone-only-g2-interview-coach-fawf.onrender.com';
 const state=new LiveState();
+const menu=new RingMenu();
+let display={...defaultDisplay};
 document.querySelector<HTMLDivElement>('#app')!.innerHTML=`
 <h1>Practice Coach · Live test</h1>
 <p>Ask your complete question. Short pauses are combined; after a quiet pause, your answer starts. Choose manual finish for longer pauses.</p>
@@ -12,10 +17,12 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML=`
 <button id="finish" disabled>Finish question</button>
 <h2>Captured question</h2><p id="transcript" aria-live="polite">No question captured yet.</p>
 <button id="start">Start practice</button><button id="next" disabled>Next question</button>
+<button id="actions">Ring actions</button><button id="retry">Retry last answer</button><button id="reconnect">Reconnect & listen</button>
 <button id="pause" disabled>Pause microphone</button><button id="stop">Stop</button>
 <p id="status" role="status">Ready to connect</p><p id="capture">Microphone off</p>
 <pre id="frame"></pre><button id="prev">Previous page</button><button id="page">Next page</button>
-<p>Glasses: scroll to read; tap for the next question; double-tap to exit.</p>
+<p>Ring / glasses: swipe for answer pages; tap for actions; swipe to choose, tap to run. Double-tap closes the menu, or opens the exit dialog from the answer.</p>
+<details id="preparation"></details><details id="display-settings"></details>
 <p>Speaker recognition and speech-follow scrolling are not enabled in this test.</p>`;
 const $=<T extends HTMLElement=HTMLElement>(s:string)=>document.querySelector<T>(s)!;
 let g2: Awaited<ReturnType<typeof connectG2>>|undefined;
@@ -25,7 +32,7 @@ let active=false, busy=false, capture=false, armed=false, epoch=0;
 let ping:ReturnType<typeof setInterval>|undefined;
 let connectionTimer:ReturnType<typeof setTimeout>|undefined;
 const status=(s:string)=>{$('#status').textContent=s;};
-function render(){const f=state.frame();$('#frame').textContent=f;g2?.show(f);$('#finish').toggleAttribute('disabled',!armed||busy);$('#next').toggleAttribute('disabled',!active||busy||armed);$('#pause').toggleAttribute('disabled',!active);}
+function render(){const f=menu.open?menu.frame():state.frame();$('#frame').textContent=f;g2?.layout(menu.open?{x:0,y:0,width:576,height:288}:geometry(display));g2?.show(f);$('#finish').toggleAttribute('disabled',!armed||busy);$('#next').toggleAttribute('disabled',!active||busy||armed);$('#pause').toggleAttribute('disabled',!active);}
 function send(type:string){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type,manual_finish:$<HTMLInputElement>('#manual').checked}));}
 // Serialize mic changes so an old enable cannot win after Stop/Pause.
 let micQueue=Promise.resolve();
@@ -50,8 +57,10 @@ async function connect(){
    if(ws.bufferedAmount>128000){armed=false;void mic(false);send('pause');status('Network too slow. Capture paused; tap Next question to retry.');render();return;}
    ws.send(new Uint8Array(pcm));
   },action:(type,direction)=>{
-   if(type==='navigate'){state.page+=direction??0;render();}
-   if(type==='resume')next();
+   if(type==='navigate'){if(menu.open)menu.move(direction??0);else state.page+=direction??0;render();}
+   if(type==='resume'){const action=menu.tap();if(action)runAction(action);render();}
+   if(type==='menu'){menu.open=true;render();}
+   if(type==='back'){const handled=menu.back();render();return handled;}
    if(type==='end'){stop();g2=undefined;connecting=undefined;}
   },status,ack:()=>{}});
   render();
@@ -86,8 +95,20 @@ $('#start').onclick=async()=>{
   socket.onerror=()=>{status('Backend connection failed. Confirm the live backend has been deployed.');};
  }catch(e){if(run!==epoch)return;stop();status(e instanceof Error?e.message:String(e));}
 };
-$('#pause').onclick=()=>{armed=false;void mic(false);send('pause');status('Microphone paused — last answer retained');render();};
+function pause(){armed=false;void mic(false);send('pause');status('Microphone paused — last answer retained');render();}
+$('#pause').onclick=pause;
 $('#finish').onclick=()=>send('finish');
 $('#stop').onclick=stop;$('#next').onclick=next;
 $('#prev').onclick=()=>{state.page--;render();};$('#page').onclick=()=>{state.page++;render();};
+function runAction(action:string){
+ if(action==='listen'){if(!active)$('#start').click();else next();}
+ if(action==='finish')send('finish');
+ if(action==='pause')pause();
+ if(action==='retry'){if(!active){status('Reconnect, then repeat the question. The old connection history is unavailable.');return;}send('retry');}
+ if(action==='reconnect'){stop();$('#start').click();}
+}
+$('#actions').onclick=()=>{menu.open=!menu.open;render();};
+$('#retry').onclick=()=>runAction('retry');$('#reconnect').onclick=()=>runAction('reconnect');
+mountPreparation(HOST,()=>$<HTMLInputElement>('#token').value.trim());
+mountDisplay(value=>{display=value;state.wordsPerLine=value.words;state.linesPerPage=value.lines;state.charsPerLine=Math.max(20,Math.floor(value.width/576*38));state.page=0;render();});
 window.addEventListener('pagehide',stop);render();

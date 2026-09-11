@@ -3,6 +3,7 @@ import {
   TextContainerProperty,
   CreateStartUpPageContainer,
   TextContainerUpgrade,
+  RebuildPageContainer,
   OsEventTypeList,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
@@ -48,7 +49,7 @@ export class DisplayWriter {
 }
 export async function connectG2(callbacks: {
   audio: (pcm: Uint8Array, role: string) => void;
-  action: (type: string, direction?: number) => void;
+  action: (type: string, direction?: number) => boolean | void;
   status: (s: string) => void;
   ack: (ms: number) => void;
 }) {
@@ -76,16 +77,31 @@ export async function connectG2(callbacks: {
     if (code !== 0) throw new Error("G2 startup failed: " + code);
   };
   await create();
+  let layout = {x:0,y:0,width:576,height:288};
+  let renderedLayout = JSON.stringify(layout);
   const writer = new DisplayWriter(
-    (text) =>
-      bridge.textContainerUpgrade(
+    async (text) => {
+      const key = JSON.stringify(layout);
+      if (key !== renderedLayout) {
+        const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({
+          containerTotalNum:1, textObject:[new TextContainerProperty({
+            containerID:1, containerName:'coach', xPosition:layout.x, yPosition:layout.y,
+            width:layout.width, height:layout.height, paddingLength:4,
+            isEventCapture:1, textColor:4, content:text,
+          })],
+        }));
+        if (!ok) return false;
+        renderedLayout = key;
+      }
+      return bridge.textContainerUpgrade(
         new TextContainerUpgrade({
           containerID: 1,
           containerName: "coach",
           content: text,
           textColor: 4,
         }),
-      ),
+      );
+    },
     callbacks.ack,
     () => callbacks.status("G2 update retry; last successful frame retained"),
   );
@@ -104,8 +120,9 @@ export async function connectG2(callbacks: {
     else if (type === OsEventTypeList.SCROLL_BOTTOM_EVENT)
       callbacks.action("navigate", 1);
     else if (type === OsEventTypeList.CLICK_EVENT) callbacks.action("resume");
-    else if (type === OsEventTypeList.DOUBLE_CLICK_EVENT)
-      void bridge.shutDownPageContainer(1);
+    else if (type === OsEventTypeList.DOUBLE_CLICK_EVENT) {
+      if (!callbacks.action("back")) void bridge.shutDownPageContainer(1);
+    } else if (type === OsEventTypeList.LONG_PRESS_EVENT) callbacks.action("menu");
     else if (
       type === OsEventTypeList.SYSTEM_EXIT_EVENT ||
       type === OsEventTypeList.ABNORMAL_EXIT_EVENT
@@ -123,6 +140,7 @@ export async function connectG2(callbacks: {
   });
   return {
     show: (s: string) => writer.show(s),
+    layout: (value: typeof layout) => {if(JSON.stringify(layout)!==JSON.stringify(value)){layout=value;writer.invalidate();}},
     mic: (on: boolean) => bridge.audioControl(on),
     close: () => {
       unsub();

@@ -1,4 +1,7 @@
 export class LiveState {
+  wordsPerLine = 6;
+  linesPerPage = 6;
+  charsPerLine = 38;
   answer = '';
   question = '';
   answerId = '';
@@ -19,17 +22,17 @@ export class LiveState {
     }
   }
   pages() {
-    const lines: string[] = []; let line = '';
+    const lines: string[] = []; let line = ''; let count = 0;
     for(const word of (this.answer || this.question || 'Press Start practice on your phone.').split(/\s+/)) {
-      for(let i=0;i<word.length;i+=38){
-        const part=word.slice(i,i+38);
-        if((line+' '+part).trim().length>38){lines.push(line);line='';}
-        line=(line+' '+part).trim();
+      for(let i=0;i<word.length;i+=this.charsPerLine){
+        const part=word.slice(i,i+this.charsPerLine);
+        if(line && ((line+' '+part).trim().length>this.charsPerLine || count>=this.wordsPerLine)){lines.push(line);line='';count=0;}
+        line=(line+' '+part).trim();count++;
       }
     }
     if(line)lines.push(line);
     const pages: string[]=[];
-    for(let i=0;i<lines.length;i+=6)pages.push(lines.slice(i,i+6).join('\n'));
+    for(let i=0;i<lines.length;i+=this.linesPerPage)pages.push(lines.slice(i,i+this.linesPerPage).join('\n'));
     return pages;
   }
   frame(){const pages=this.pages();this.page=Math.max(0,Math.min(this.page,pages.length-1));return `${this.answer?'ANSWER':'QUESTION'}  ${this.page+1}/${pages.length}\n\n${pages[this.page]}`;}

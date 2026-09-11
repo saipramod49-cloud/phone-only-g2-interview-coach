@@ -189,3 +189,27 @@ def test_second_clause_resets_auto_finish(monkeypatch):
             assert ws.receive_json()['type']=='answer.delta'
             assert ws.receive_json()['type']=='answer.done'
             assert questions==['How do retries work? When can tombstones be deleted?']
+
+
+def test_retry_reuses_question_without_more_audio(monkeypatch):
+    monkeypatch.setenv('APP_TOKEN','test-token')
+    questions=[];contexts=[];sessions=[]
+    async def connect():
+        session=FakeSTT();sessions.append(session);return session
+    async def answer(question,evidence,context):
+        questions.append(question);contexts.append(context)
+        yield 'Retryable answer'
+    with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),TestClient(app) as client:
+        with client.websocket_connect('/ws/live') as ws:
+            ws.send_json({'type':'auth','token':'test-token'});ws.receive_json()
+            ws.send_json({'type':'listen','manual_finish':True});ws.receive_json()
+            ws.send_bytes(b'\x00\x01'*160);ws.receive_json();ws.receive_json()
+            ws.send_json({'type':'finish'})
+            while ws.receive_json()['type']!='answer.done':pass
+            ws.send_json({'type':'retry'})
+            assert ws.receive_json()['type']=='answer.start'
+            assert ws.receive_json()['type']=='answer.delta'
+            assert ws.receive_json()['type']=='answer.done'
+            assert questions==['Why?','Why?']
+            assert contexts==['','']
+            assert len(sessions)==1 and len(sessions[0].audio)==1

@@ -19,6 +19,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     HTMLResponse,
     StreamingResponse,
@@ -241,6 +242,12 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+# Hub packages can use different WebView origins (including null). All manager
+# routes still require an explicit app token; no ambient cookies are accepted.
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_credentials=False, allow_methods=["GET", "POST", "DELETE"],
+                   allow_headers=["X-App-Token", "Content-Type"])
 
 
 # ============================================================
@@ -686,11 +693,14 @@ async def upload(
             detail="File exceeds 8 MB",
         )
 
-    text = extract(
-        file.filename
-        or "upload.txt",
-        data,
-    ).strip()
+    if kind not in ("resume", "notes", "project", "responsibilities"):
+        raise HTTPException(status_code=422, detail="Unsupported document type")
+    try:
+        text = extract(file.filename or "upload.txt", data).strip()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=422, detail="Could not read this file. Try a text PDF, DOCX or TXT file.")
 
     if not text:
         raise HTTPException(

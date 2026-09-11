@@ -33,6 +33,7 @@ async def live(ws: WebSocket):
     speaking = False
     quiet_seconds = 2.0
     manual_finish = False
+    last_question = ""
 
     def cancel_endpoint():
         nonlocal endpoint
@@ -91,6 +92,8 @@ async def live(ws: WebSocket):
         rate_state = None
 
     async def generate(question):
+        nonlocal last_question
+        last_question = question
         try:
             with connect() as db:
                 profile = active_profile(db)
@@ -191,6 +194,15 @@ async def live(ws: WebSocket):
             kind = message.get('type')
             if kind == 'ping':
                 await send('pong')
+            elif kind == 'retry':
+                if listening or (generation and not generation.done()):
+                    await send('state', message='Finish or pause capture and wait for the current answer before retrying.')
+                elif last_question:
+                    if len(history) >= 2 and history[-2] == f'user: {last_question}':
+                        del history[-2:]
+                    generation = asyncio.create_task(generate(last_question))
+                else:
+                    await send('state', message='No question in this connection yet. Choose Listen and repeat your question.')
             elif kind == 'finish':
                 await finish_question()
             elif kind == 'pause':
