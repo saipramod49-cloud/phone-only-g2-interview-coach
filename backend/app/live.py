@@ -18,7 +18,7 @@ from contextlib import suppress
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Header, HTTPException
 from .providers import answer_stream, openai_transcription_session, transcription_diagnostic, align_candidate_speech
 from .retrieval import search
-from .storage import active_profile, chunks_for, connect
+from .storage import active_profile, chunks_for, core_profile_for, connect
 
 router = APIRouter()
 
@@ -65,6 +65,7 @@ async def live(ws: WebSocket):
     current_answer_id = ''
     answer_model = None
     answer_effort = "auto"
+    coach_instructions = ""
     stt_started = 0.0
 
     def cancel_endpoint():
@@ -141,6 +142,7 @@ async def live(ws: WebSocket):
         last_question = question
         requested_model, requested_effort = answer_model, answer_effort
         selected_output_language = output_language
+        selected_coach_instructions = coach_instructions
         request_started = time.monotonic()
         first_delta = True
         first_text_ms = None
@@ -148,17 +150,18 @@ async def live(ws: WebSocket):
             selected_answer_model, selected_effort = resolve_model(requested_model, requested_effort)
             with connect() as db:
                 profile = active_profile(db)
-                chunks = chunks_for(db, profile['id']) if profile else []
+                chunks = chunks_for(db, profile['id'], include_core=False) if profile else []
+                core = core_profile_for(db, profile['id']) if profile else ''
                 evidence = search(chunks, question)
                 if not evidence:
                     evidence = chunks[:7]
-            grounded = '\n\n'.join(f'[{c.source}] {c.text}' for c in evidence)
+            grounded = ('[USER-REPORTED CORE PROFILE; facts are not independently verified]\n'+core+'\n\n' if core else '')+'\n\n'.join(f'[{c.source}] {c.text}' for c in evidence)
             answer_id = uuid.uuid4().hex
             current_answer_id = answer_id
             current_answer = ''
             await send('answer.start', answer_id=answer_id, question=question, model=selected_answer_model, reasoning=selected_effort or 'API default')
             full = ''
-            async for delta in answer_stream(question, grounded, '\n'.join(history[-12:])[-16000:], selected_output_language, selected_answer_model, selected_effort or "default"):
+            async for delta in answer_stream(question, grounded, '\n'.join(history[-12:])[-16000:], selected_output_language, selected_answer_model, selected_effort or "default", selected_coach_instructions):
                 full += delta
                 current_answer = full
                 if first_delta:
@@ -271,7 +274,7 @@ async def live(ws: WebSocket):
         if hello.get('type') != 'auth':
             await ws.close(code=1008, reason='Authentication required')
             return
-        await send('ready', protocol=1, build='0.2.6', features=['continuous_questions','preparation','display_settings','speaker_follow','model_selection','all_models'])
+        await send('ready', protocol=1, build='0.2.7', features=['continuous_questions','preparation','display_settings','speaker_follow','model_selection','all_models','coach_instructions','core_profile'])
         while True:
             event = await ws.receive()
             if event['type'] == 'websocket.disconnect':
@@ -292,6 +295,14 @@ async def live(ws: WebSocket):
                 break
             message = json.loads(raw)
             kind = message.get('type')
+            if kind == 'coach.instructions':
+                text = message.get('text','')
+                if not isinstance(text,str) or len(text)>4000:
+                    await send('state',message='Coach instructions must be text of 4,000 characters or fewer.')
+                    continue
+                coach_instructions = text.strip()
+                await send('coach.instructions.saved', active=bool(coach_instructions), characters=len(coach_instructions))
+                continue
             if kind == 'speaker':
                 role = message.get('role')
                 frame_role = role if role in ('candidate','interviewer') else 'unknown'

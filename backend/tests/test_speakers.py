@@ -34,7 +34,7 @@ def test_candidate_speech_follows_without_generating_an_answer(monkeypatch):
                 {'type':'conversation.item.input_audio_transcription.completed','item_id':item,'transcript':transcript},
             ]:await self.queue.put(json.dumps(event))
     async def connect():return Session()
-    async def answer(question,evidence,context,language='english',model=None, reasoning_effort="auto"):questions.append(question);chosen.append((language,model));yield 'Preserve the delete tombstone.'
+    async def answer(question,evidence,context,language='english',model=None, reasoning_effort="auto", coach_instructions=""):questions.append(question);chosen.append((language,model));yield 'Preserve the delete tombstone.'
     async def align(spoken,answer):return 'Preserve the delete tombstone'
     with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),patch('app.live.align_candidate_speech',align),TestClient(app) as client:
         with client.websocket_connect('/ws/live') as ws:

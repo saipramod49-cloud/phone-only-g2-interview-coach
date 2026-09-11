@@ -672,7 +672,7 @@ async def upload(
             detail="File exceeds 8 MB",
         )
 
-    if kind not in ("resume", "notes", "project", "responsibilities", "professional profile", "roles and responsibilities", "project notes", "prep notes", "project details", "other evidence"):
+    if kind not in ("resume", "notes", "project", "responsibilities", "professional profile", "roles and responsibilities", "project notes", "prep notes", "project details", "other evidence", "core_profile"):
         raise HTTPException(status_code=422, detail="Unsupported document type")
     try:
         text = extract(file.filename or "upload.txt", data).strip()
@@ -688,6 +688,9 @@ async def upload(
                 "No readable text found"
             ),
         )
+
+    if kind == "core_profile" and len(text) > 4000:
+        raise HTTPException(status_code=422, detail="Core profile must be 4,000 characters or fewer. Upload longer material as Prep notes.")
 
     did = str(
         uuid.uuid4()
@@ -710,6 +713,9 @@ async def upload(
                     "Profile not found"
                 ),
             )
+
+        if kind == "core_profile":
+            db.execute("DELETE FROM documents WHERE profile_id=? AND kind='core_profile'", (pid,))
 
         db.execute(
             """

@@ -24,7 +24,7 @@ def test_answer_language_is_explicit_and_question_is_preserved(monkeypatch):
     with patch('app.providers.httpx.AsyncClient',Client):asyncio.run(run())
     assert 'Answer in English' in payloads[0]['input'][0]['content']
     assert 'Romanized Telugu' in payloads[1]['input'][0]['content']
-    assert all('తెలుగులో CDC గురించి చెప్పండి' in p['input'][1]['content'] for p in payloads)
+    assert all('తెలుగులో CDC గురించి చెప్పండి' in p['input'][-1]['content'] for p in payloads)
 
 
 def test_transcription_does_not_force_english(monkeypatch):

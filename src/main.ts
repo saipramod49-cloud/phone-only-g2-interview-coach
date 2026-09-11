@@ -1,4 +1,5 @@
 import {connectG2} from './g2';
+import {mountCoachInstructions} from './coach-instructions';
 import {mountModels,formatTiming} from './models';
 import {LiveState} from './live-state';
 import './style.css';
@@ -19,7 +20,7 @@ let recovery:ReturnType<typeof setTimeout>|undefined;
 let recoveryAttempts=0;
 let wantsListening=false;
 document.querySelector<HTMLDivElement>('#app')!.innerHTML=`
-<h1>Practice Coach · 0.2.6</h1>
+<h1>Practice Coach · 0.2.7</h1>
 <p id="backend-build">Backend version: connect to check</p>
 <nav><button id="open-preparation">Upload resume & notes</button><button id="open-display">Words, characters & window</button></nav>
 <p>Start once for continuous questions. Short pauses are combined. Pause or Stop when finished. Keep the Even app active; background capture is not verified.</p>
@@ -29,6 +30,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML=`
 <label>Speaker control<select id="speaker-mode"><option value="questions">Question detection (speaker unknown)</option><option value="device">Automatic — Even device estimate</option><option value="interviewer">Interviewer — manual</option><option value="candidate">Candidate — manual</option></select></label>
 <p>Automatic mode maps the wearer's voice to Candidate and another voice to Interviewer. Verify this with both people before relying on it. Unknown or mixed speech will not trigger answers in automatic mode.</p>
 <label>Answer scrolling<select id="scroll-mode"><option value="manual">Manual — ring or phone</option><option value="voice">Voice follow — candidate speech</option></select></label><p id="follow-status">Manual scrolling</p>
+<section id="coach-instructions" aria-label="Talk to your coach"></section>
 <section id="model-controls" aria-label="Model selection"></section>
 <label>Answer language<select id="answer-language"><option value="english">English</option><option value="telugu_latin">Telugu in English letters</option></select></label>
 <p>Ask in Telugu, English, or a mix. Lens answers use English or Romanized Telugu. Original question text stays visible on the phone. A language change applies to the next question or Retry last answer.</p>
@@ -55,6 +57,7 @@ let connectionTimer:ReturnType<typeof setTimeout>|undefined;
 const status=(s:string)=>{$('#status').textContent=s;};
 function render(){const f=menu.open?menu.frame():`${speaker==='unknown'?'SPEAKER ?':speaker.toUpperCase()}\n${state.frame().replace('\n\n','\n')}`;$('#frame').textContent=f;g2?.layout(menu.open?{x:0,y:0,width:576,height:288}:geometry(display));g2?.show(lensSafeFrame(f));$('#finish').toggleAttribute('disabled',!armed||busy);$('#next').toggleAttribute('disabled',!active||busy||armed);$('#pause').toggleAttribute('disabled',!active);}
 const modelControls=mountModels(HOST,()=>$<HTMLInputElement>('#token').value.trim(),()=>send('settings'));
+const coach=mountCoachInstructions((text)=>{if(ws?.readyState!==WebSocket.OPEN)return false;ws.send(JSON.stringify({type:"coach.instructions",text}));return true;});
 function send(type:string){
  try{const selection=['listen','retry','settings'].includes(type)?modelControls.read():{};
   if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type,...selection,manual_finish:$<HTMLInputElement>('#manual').checked,continuous:$<HTMLInputElement>('#continuous').checked,output_language:$<HTMLSelectElement>('#answer-language').value,speaker_gate:$<HTMLSelectElement>('#speaker-mode').value!=='questions',voice_follow:$<HTMLSelectElement>('#scroll-mode').value==='voice'}));
@@ -113,7 +116,8 @@ $('#start').onclick=async()=>{
   socket.onopen=()=>{if(run!==epoch)return;socket.send(JSON.stringify({type:'auth',token}));};
   socket.onmessage=event=>{if(ws!==socket)return;try{
    const m=JSON.parse(String(event.data));
-   if(m.type==='ready'){clearTimeout(connectionTimer);$('#backend-build').textContent='Backend: '+(m.build??'older version');$('#service-info').textContent='Backend '+(m.build??'unknown')+' — connected';if(!m.features?.includes('all_models')){stop();status('Backend update needed. Deploy the 0.2.6 patch to Render, then reconnect.');return;}ping=setInterval(()=>send('ping'),10000);next();}
+   if(m.type==='ready'){clearTimeout(connectionTimer);$('#backend-build').textContent='Backend: '+(m.build??'older version');$('#service-info').textContent='Backend '+(m.build??'unknown')+' — connected';if(!m.features?.includes('coach_instructions')){stop();status('Backend update needed. Deploy the 0.2.7 patch to Render, then reconnect.');return;}coach.sync();ping=setInterval(()=>send('ping'),10000);next();}
+   else if(m.type==='coach.instructions.saved'){coach.ack(m.active);}
    else if(m.type==='capture'){
     armed=Boolean(m.active);if(m.active&&!state.answer)state.question='Listening…';void mic(Boolean(m.active));if(m.active){recoveryAttempts=0;lastAudioAt=Date.now();}if(m.active)status('Listening — short pauses are allowed');
    }else if(m.type==='transcript.partial'||m.type==='transcript.final'){
@@ -121,7 +125,7 @@ $('#start').onclick=async()=>{
    }else if(m.type==='candidate.transcript'){$('#follow-status').textContent='Candidate: '+m.text;}
    else if(m.type==='follow'){if($<HTMLSelectElement>('#scroll-mode').value==='voice'&&m.answer_id===state.answerId&&!menu.open){const page=pageForQuote(state.pages(),m.quote);if(page!==null&&page>=state.page){state.page=Math.min(page,state.page+1);$('#follow-status').textContent='Following your speech';}}}
    else if(m.type==='follow.state'){$('#follow-status').textContent=m.message;}
-   else if(m.type==='answer.start'){busy=true;$('#service-info').textContent='Backend '+ '0.2.6'+' — answer model: '+m.model+' · reasoning: '+m.reasoning;$('#model-timing').textContent=formatTiming(null);state.apply(m);status('Generating answer…');}
+   else if(m.type==='answer.start'){busy=true;$('#service-info').textContent='Backend '+ '0.2.7'+' — answer model: '+m.model+' · reasoning: '+m.reasoning;$('#model-timing').textContent=formatTiming(null);state.apply(m);status('Generating answer…');}
    else if(m.type==='answer.delta'){if(m.answer_id===state.answerId&&typeof m.first_text_ms==='number')$('#model-timing').textContent=formatTiming(m.first_text_ms);state.apply(m);}
    else if(m.type==='answer.done'){busy=false;if(m.answer_id===state.answerId&&typeof m.total_ms==='number')$('#model-timing').textContent=formatTiming(m.first_text_ms??null,m.total_ms)+' (backend generation time; excludes speech capture and lens delivery)';state.apply(m);status(capture?'Answer ready — still listening for the next question.':'Answer ready. Resume listening when ready.');}
    else if(m.type==='error'){busy=false;if(!m.keep_capture){armed=false;void mic(false);}status(m.message);if(m.recoverable)scheduleRecovery();}

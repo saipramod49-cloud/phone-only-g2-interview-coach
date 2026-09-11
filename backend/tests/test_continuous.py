@@ -31,7 +31,7 @@ def test_continuous_two_questions_and_readback_share_one_capture(monkeypatch):
             ]:await self.queue.put(json.dumps(e))
     async def connect():
         session=Session();sessions.append(session);return session
-    async def answer(question,evidence,context,output_language='english', model_override=None, reasoning_effort="auto"):
+    async def answer(question,evidence,context,output_language='english', model_override=None, reasoning_effort="auto", coach_instructions=""):
         questions.append(question);yield 'Use an idempotent MERGE.'
     with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),TestClient(app) as client:
         with client.websocket_connect('/ws/live') as ws:

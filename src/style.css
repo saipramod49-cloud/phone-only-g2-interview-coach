@@ -3,3 +3,20 @@
 main{max-width:720px;margin:auto;padding:24px}pre{white-space:pre-wrap;background:#071007;color:#b7ef9b;padding:18px;border-radius:12px;min-height:220px;font-size:18px;line-height:1.5}button:disabled{opacity:.45}#capture{font-weight:700}#status{padding:12px;background:#e0eadd;border-radius:8px}
 
 #app{max-width:720px;margin:auto;padding:22px}details{margin-top:24px;padding:16px;border:1px solid #bdc9be;border-radius:12px}summary{font-size:20px;font-weight:700;cursor:pointer}textarea{width:100%;min-height:100px;font:inherit;padding:12px;border:1px solid #bdc9be;border-radius:10px}input[type=checkbox]{width:auto}#documents{padding-left:20px}#documents button{width:auto;margin:6px 12px}#display-canvas{position:relative;width:100%;aspect-ratio:2;background:#142019;border:1px solid #7ea786;border-radius:8px;overflow:hidden}#display-sample{position:absolute;min-height:0;margin:0;padding:8px;font-size:clamp(8px,2vw,14px);line-height:1.15;overflow:hidden;border:1px solid #b7ef9b}
+
+
+/* Keep the embedded phone page inside its viewport, including long native
+   select options, document names, streamed text, and expanded settings. */
+html{width:100%;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{width:100%;min-width:0}
+main,#app,.shell{width:100%;min-width:0;max-width:720px}
+#app{padding:20px max(16px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+#app>* ,section,nav,details,fieldset{min-width:0;max-width:100%}
+#app{overflow-wrap:anywhere}
+input,select,textarea,button{min-width:0;max-width:100%;font-size:16px}
+select{display:block;text-overflow:ellipsis}
+button{white-space:normal;overflow-wrap:anywhere}
+pre{max-width:100%;min-width:0;overflow-wrap:anywhere}
+input[type=file]{padding:10px 4px}
+#documents button{max-width:calc(100% - 24px)}
+@media(max-width:400px){details{padding:12px}h1{font-size:24px}summary{font-size:18px}}

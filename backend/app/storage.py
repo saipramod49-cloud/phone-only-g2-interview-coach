@@ -23,12 +23,17 @@ def connect():
 def active_profile(db):
     return db.execute("SELECT * FROM profiles ORDER BY active DESC,created_at DESC LIMIT 1").fetchone()
 
-def chunks_for(db, profile_id: str) -> list[Chunk]:
+def core_profile_for(db, profile_id: str) -> str:
+    row=db.execute("SELECT text FROM documents WHERE profile_id=? AND kind='core_profile' ORDER BY created_at DESC LIMIT 1",(profile_id,)).fetchone()
+    return row[0][:4000] if row else ""
+
+def chunks_for(db, profile_id: str, include_core: bool = True) -> list[Chunk]:
     chunks=[]
     p=db.execute("SELECT job_description FROM profiles WHERE id=?",(profile_id,)).fetchone()
     if p and p[0]: chunks += chunk_text("Target job description", p[0])
-    for d in db.execute("SELECT name,text FROM documents WHERE profile_id=?",(profile_id,)):
-        chunks += chunk_text(d["name"], d["text"])
+    for d in db.execute("SELECT name,text,kind FROM documents WHERE profile_id=?",(profile_id,)):
+        if include_core or d["kind"] != "core_profile":
+            chunks += chunk_text(d["name"], d["text"])
     return chunks
 
 def snapshot(db):

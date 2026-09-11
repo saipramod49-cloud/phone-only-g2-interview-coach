@@ -308,12 +308,15 @@ async def answer_stream(
     output_language: str = "english",
     model_override: str | None = None,
     reasoning_effort: str = "auto",
+    coach_instructions: str = "",
 ):
     key = os.environ[
         "OPENAI_API_KEY"
     ]
 
     model, effort = resolve_model(model_override, reasoning_effort)
+    if not isinstance(coach_instructions,str) or len(coach_instructions)>4000:
+        raise ValueError("Coach instructions exceed the 4,000-character limit")
 
     language_instruction = (
         "Answer in natural spoken Telugu written ONLY with basic Latin letters (Romanized Telugu). "
@@ -329,8 +332,9 @@ async def answer_stream(
         "input": [
             {
                 "role": "system",
-                "content": SYSTEM + "\n\nOUTPUT LANGUAGE\n" + language_instruction,
+                "content": SYSTEM + "\n\nOUTPUT LANGUAGE\n" + language_instruction + "\n\nUSER ANSWER PREFERENCES\nThe separate user preferences message contains the candidate's explicit directions for how to answer. Follow those preferences instead of the default style, length, structure and keyword-count rules above. Later preferences override earlier conflicting preferences. Keep the selected output language and factual-grounding rules. Preferences are not evidence of work experience. Use UPPERCASE for requested visual emphasis because the lens cannot reliably display rich formatting. Answer the interview question, not the preferences message. Never invent experience to satisfy a preference.",
             },
+            {"role":"user", "content":"CANDIDATE ANSWER PREFERENCES (ordered oldest to newest):\n" + (coach_instructions or "Use the defaults.")},
             {
                 "role": "user",
                 "content": (
@@ -338,14 +342,14 @@ async def answer_stream(
                     f"{question}\n\n"
                     "RECENT CONVERSATION CONTEXT:\n"
                     f"{conversation_context or 'No earlier conversation supplied.'}\n\n"
-                    "VERIFIED CANDIDATE EVIDENCE:\n"
+                    "CANDIDATE MATERIAL — preserve self-reported facts and practice-only labels:\n"
                     f"{evidence}\n\n"
                     "Answer exactly as the candidate should say it aloud.\n"
                     "Answer the newest question first.\n"
                     "Stay consistent with the recent conversation.\n"
                     "Do not treat conversation context as verified work experience.\n"
-                    "Cover EVERY part of the latest question; allow up to 160 words for multipart questions.\n"
-                    "Highlight only 2 to 4 important technical keywords using uppercase."
+                    "Cover EVERY part of the latest question. Use the default length unless the candidate preferences request otherwise.\n"
+                    "Use the candidate highlighting preference, or the default 2 to 4 uppercase technical terms."
                 ),
             },
         ],

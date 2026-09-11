@@ -91,7 +91,7 @@ def test_retry_uses_new_model_same_question_and_reports_timing(monkeypatch):
         async def close(self):pass
         async def send(self,raw):await self.queue.put(json.dumps({'type':'conversation.item.input_audio_transcription.completed','item_id':'1','transcript':'Explain CDC retry ordering?'}))
     async def connect():return Session()
-    async def answer(question,evidence,context,language,model,effort):
+    async def answer(question,evidence,context,language,model,effort,coach_instructions=""):
         calls.append((question,context,model,effort));yield 'Preserve sequence ordering.'
     with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),TestClient(app) as client:
         with client.websocket_connect('/ws/live') as ws:

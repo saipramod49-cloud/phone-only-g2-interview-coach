@@ -6,7 +6,8 @@ export function mountPreparation(host:string,token:()=>string){
  <button id="load-prep">Load profiles</button><label>Active profile<select id="profiles"></select></label>
  <label>New profile name<input id="profile-name" maxlength="120" placeholder="GCP Data Engineer"></label>
  <label>Job description<textarea id="job-description" maxlength="30000"></textarea></label><button id="create-profile">Create and select profile</button>
- <label>Document type<select id="doc-kind"><option value="resume">Resume</option><option value="notes">Prep notes</option></select></label>
+ <label>Document type<select id="doc-kind"><option value="resume">Resume</option><option value="notes">Prep notes</option><option value="core_profile">Core profile — always included</option></select></label>
+ <p>Core profile: one short fact sheet, up to 4,000 characters, included with every answer. Uploading a new core replaces the previous core for this profile. Longer study material belongs in Prep notes.</p>
  <label>File (PDF, DOCX, TXT, MD, CSV; up to 8 MB)<input id="prep-file" type="file" accept=".pdf,.docx,.txt,.md,.csv"></label><button id="upload-prep">Upload file</button>
  <label>Or paste preparation notes<textarea id="prep-notes" maxlength="60000"></textarea></label><button id="save-notes">Save pasted notes</button>
  <p id="prep-status" role="status"></p><ul id="documents"></ul>`;
