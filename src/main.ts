@@ -1,650 +1,89 @@
-import {
-  waitForEvenAppBridge,
-  TextContainerProperty,
-} from "@evenrealities/even_hub_sdk";
-
-import "./style.css";
-
-let bridge: any = null;
-let ws: WebSocket | null = null;
-
-let micStarted = false;
-let stoppedByUser = false;
-
-let reconnectTimer: number | null = null;
-let pingTimer: number | null = null;
-
-const RECONNECT_DELAY_MS = 2000;
-const PING_INTERVAL_MS = 10000;
-
-let answerText = "";
-
-
-// ============================================================
-// CONFIG
-// ============================================================
-
-function getBackendUrl(): string {
-  const saved =
-    localStorage.getItem("serviceUrl");
-
-  return (
-    saved ||
-    "https://phone-only-g2-interview-coach-fawf.onrender.com"
-  );
+import {connectG2} from './g2';
+import {LiveState} from './live-state';
+import './style.css';
+const HOST='phone-only-g2-interview-coach-fawf.onrender.com';
+const state=new LiveState();
+document.querySelector<HTMLDivElement>('#app')!.innerHTML=`
+<h1>Practice Coach · Live test</h1>
+<p>Ask one practice question, then read your answer. Tap Next question when ready for another.</p>
+<label>App access token <input id="token" type="password" autocomplete="off" placeholder="Your Render APP_TOKEN"></label>
+<p>Your OpenAI key stays on Render. This token is kept only while this page is open.</p>
+<button id="start">Start practice</button><button id="next" disabled>Next question</button>
+<button id="pause" disabled>Pause microphone</button><button id="stop">Stop</button>
+<p id="status" role="status">Ready to connect</p><p id="capture">Microphone off</p>
+<pre id="frame"></pre><button id="prev">Previous page</button><button id="page">Next page</button>
+<p id="transcript"></p><p>Glasses: scroll to read; tap for the next question; double-tap to exit.</p>
+<p>Speaker recognition and speech-follow scrolling are not enabled in this test.</p>`;
+const $=<T extends HTMLElement=HTMLElement>(s:string)=>document.querySelector<T>(s)!;
+let g2: Awaited<ReturnType<typeof connectG2>>|undefined;
+let connecting: Promise<void>|undefined;
+let ws: WebSocket|undefined;
+let active=false, busy=false, capture=false, armed=false, epoch=0;
+let ping:ReturnType<typeof setInterval>|undefined;
+let connectionTimer:ReturnType<typeof setTimeout>|undefined;
+const status=(s:string)=>{$('#status').textContent=s;};
+function render(){const f=state.frame();$('#frame').textContent=f;g2?.show(f);$('#next').toggleAttribute('disabled',!active||busy||armed);$('#pause').toggleAttribute('disabled',!active);}
+function send(type:string){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type}));}
+// Serialize mic changes so an old enable cannot win after Stop/Pause.
+let micQueue=Promise.resolve();
+function mic(on:boolean){
+ capture=on;$('#capture').textContent=on?'Microphone on — ask your question':'Microphone off';
+ micQueue=micQueue.then(async()=>{
+  const target=capture;
+  if(!g2)return;
+  const ok=await g2.mic(target);
+  if(target&&!ok){capture=false;armed=false;send('pause');status('G2 microphone was not enabled. Check the glasses connection and permissions.');$('#capture').textContent='Microphone off';render();}
+ }).catch(()=>{capture=false;armed=false;send('pause');status('Microphone control failed');$('#capture').textContent='Microphone off';render();});
+ return micQueue;
 }
-
-
-function getToken(): string {
-  return (
-    localStorage.getItem("accessToken") ||
-    ""
-  );
+function stop(){epoch++;active=false;busy=false;armed=false;void mic(false);clearInterval(ping);clearTimeout(connectionTimer);const old=ws;ws=undefined;old?.close();$('#start').removeAttribute('disabled');status('Stopped — last answer retained');render();}
+function next(){if(!active||busy||armed)return;armed=true;status('Starting question capture…');send('listen');render();}
+async function connect(){
+ if(connecting)return connecting;
+ connecting=(async()=>{try{
+  status('Connecting to G2…');
+  g2=await connectG2({audio:(pcm)=>{
+   if(!capture||ws?.readyState!==WebSocket.OPEN)return;
+   if(ws.bufferedAmount>128000){armed=false;void mic(false);send('pause');status('Network too slow. Capture paused; tap Next question to retry.');render();return;}
+   ws.send(new Uint8Array(pcm));
+  },action:(type,direction)=>{
+   if(type==='navigate'){state.page+=direction??0;render();}
+   if(type==='resume')next();
+   if(type==='end'){stop();g2=undefined;connecting=undefined;}
+  },status,ack:()=>{}});
+  render();
+ }catch(e){connecting=undefined;throw e;}})();return connecting;
 }
-
-
-function getWebSocketUrl(): string {
-  const base = getBackendUrl()
-    .replace(/^https:/, "wss:")
-    .replace(/^http:/, "ws:")
-    .replace(/\/$/, "");
-
-  const token =
-    encodeURIComponent(
-      getToken()
-    );
-
-  return (
-    `${base}/ws/glasses?token=${token}`
-  );
-}
-
-
-// ============================================================
-// GLASSES DISPLAY
-// ============================================================
-
-async function showText(
-  text: string
-): Promise<void> {
-
-  if (!bridge) {
-    return;
-  }
-
-  try {
-    await bridge.updatePage({
-      containers: [
-        new TextContainerProperty({
-          x: 0,
-          y: 0,
-          width: 576,
-          height: 288,
-          text:
-            text ||
-            "Listening...",
-        }),
-      ],
-    });
-
-    if (
-      ws &&
-      ws.readyState ===
-        WebSocket.OPEN
-    ) {
-      ws.send(
-        JSON.stringify({
-          type: "display_ack",
-          ts: Date.now(),
-        })
-      );
-    }
-
-  } catch (error) {
-    console.error(
-      "DISPLAY ERROR",
-      error
-    );
-  }
-}
-
-
-// ============================================================
-// MICROPHONE
-// ============================================================
-
-async function startMicrophone():
-Promise<void> {
-
-  if (
-    micStarted ||
-    !bridge
-  ) {
-    return;
-  }
-
-  try {
-    const result =
-      await bridge.audioControl(
-        true
-      );
-
-    console.log(
-      "MIC START RESULT",
-      result
-    );
-
-    if (result) {
-      micStarted = true;
-    }
-
-  } catch (error) {
-    console.error(
-      "MIC START ERROR",
-      error
-    );
-  }
-}
-
-
-async function stopMicrophone():
-Promise<void> {
-
-  if (
-    !bridge ||
-    !micStarted
-  ) {
-    return;
-  }
-
-  try {
-    await bridge.audioControl(
-      false
-    );
-  } catch (error) {
-    console.error(
-      "MIC STOP ERROR",
-      error
-    );
-  }
-
-  micStarted = false;
-}
-
-
-// ============================================================
-// AUDIO
-// ============================================================
-
-function sendAudio(
-  audio: ArrayBuffer
-): void {
-
-  if (
-    ws &&
-    ws.readyState ===
-      WebSocket.OPEN
-  ) {
-    ws.send(audio);
-  }
-}
-
-
-// ============================================================
-// SERVER MESSAGES
-// ============================================================
-
-function handleServerMessage(
-  raw: string
-): void {
-
-  try {
-    const message =
-      JSON.parse(raw);
-
-    switch (message.type) {
-
-      case "ready":
-      case "listening":
-
-        showText(
-          message.text ||
-          "Listening..."
-        );
-
-        break;
-
-
-      case "answer_start":
-
-        answerText = "";
-
-        showText(
-          "Thinking..."
-        );
-
-        break;
-
-
-      case "answer_delta":
-
-        answerText +=
-          message.delta || "";
-
-        showText(
-          answerText
-        );
-
-        break;
-
-
-      case "answer_done":
-
-        if (message.text) {
-          answerText =
-            message.text;
-        }
-
-        showText(
-          answerText
-        );
-
-        break;
-
-
-      case "error":
-
-        showText(
-          message.message ||
-          "Error"
-        );
-
-        break;
-    }
-
-  } catch (error) {
-    console.error(
-      "MESSAGE ERROR",
-      error,
-      raw
-    );
-  }
-}
-
-
-// ============================================================
-// KEEPALIVE
-// ============================================================
-
-function stopPing(): void {
-
-  if (
-    pingTimer !== null
-  ) {
-    clearInterval(
-      pingTimer
-    );
-
-    pingTimer = null;
-  }
-}
-
-
-function startPing(): void {
-
-  stopPing();
-
-  pingTimer =
-    window.setInterval(
-      () => {
-
-        if (
-          ws &&
-          ws.readyState ===
-            WebSocket.OPEN
-        ) {
-          ws.send(
-            JSON.stringify({
-              type: "ping",
-              ts: Date.now(),
-            })
-          );
-        }
-
-      },
-      PING_INTERVAL_MS
-    );
-}
-
-
-// ============================================================
-// RECONNECT
-// ============================================================
-
-function scheduleReconnect():
-void {
-
-  if (stoppedByUser) {
-    return;
-  }
-
-  if (
-    reconnectTimer !== null
-  ) {
-    return;
-  }
-
-  reconnectTimer =
-    window.setTimeout(
-      () => {
-
-        reconnectTimer = null;
-
-        connect();
-
-      },
-      RECONNECT_DELAY_MS
-    );
-}
-
-
-// ============================================================
-// WEBSOCKET
-// ============================================================
-
-function connect(): void {
-
-  if (stoppedByUser) {
-    return;
-  }
-
-  if (
-    ws &&
-    (
-      ws.readyState ===
-        WebSocket.OPEN ||
-      ws.readyState ===
-        WebSocket.CONNECTING
-    )
-  ) {
-    return;
-  }
-
-  console.log(
-    "WS CONNECTING"
-  );
-
-  const socket =
-    new WebSocket(
-      getWebSocketUrl()
-    );
-
-  socket.binaryType =
-    "arraybuffer";
-
-  ws = socket;
-
-
-  socket.onopen =
-    async () => {
-
-      if (ws !== socket) {
-        return;
-      }
-
-      console.log(
-        "WS OPEN"
-      );
-
-      startPing();
-
-      await showText(
-        "Listening..."
-      );
-
-      await startMicrophone();
-    };
-
-
-  socket.onmessage =
-    (event) => {
-
-      if (ws !== socket) {
-        return;
-      }
-
-      if (
-        typeof event.data ===
-        "string"
-      ) {
-        handleServerMessage(
-          event.data
-        );
-      }
-    };
-
-
-  socket.onerror =
-    (event) => {
-
-      console.error(
-        "WS ERROR",
-        event
-      );
-    };
-
-
-  socket.onclose =
-    (event) => {
-
-      if (ws !== socket) {
-        return;
-      }
-
-      console.log(
-        "WS CLOSED",
-        {
-          code:
-            event.code,
-          reason:
-            event.reason,
-          clean:
-            event.wasClean,
-        }
-      );
-
-      stopPing();
-
-      ws = null;
-
-      /*
-       * Do NOT stop the microphone
-       * on an unexpected socket close.
-       *
-       * We reconnect automatically.
-       */
-      scheduleReconnect();
-    };
-}
-
-
-// ============================================================
-// STOP
-// ============================================================
-
-async function stopEverything():
-Promise<void> {
-
-  stoppedByUser = true;
-
-  if (
-    reconnectTimer !== null
-  ) {
-    clearTimeout(
-      reconnectTimer
-    );
-
-    reconnectTimer = null;
-  }
-
-  stopPing();
-
-  const socket =
-    ws;
-
-  ws = null;
-
-  if (
-    socket &&
-    (
-      socket.readyState ===
-        WebSocket.OPEN ||
-      socket.readyState ===
-        WebSocket.CONNECTING
-    )
-  ) {
-    socket.close(
-      1000,
-      "User stopped"
-    );
-  }
-
-  await stopMicrophone();
-
-  await showText(
-    "Stopped"
-  );
-}
-
-
-// ============================================================
-// STARTUP
-// ============================================================
-
-async function main():
-Promise<void> {
-
-  console.log(
-    "BOOT: Interview Lens"
-  );
-
-  bridge =
-    await waitForEvenAppBridge();
-
-  console.log(
-    "EVEN BRIDGE READY"
-  );
-
-  await bridge.createStartUpPageContainer({
-    containers: [
-      new TextContainerProperty({
-        x: 0,
-        y: 0,
-        width: 576,
-        height: 288,
-        text: "Starting...",
-      }),
-    ],
-  });
-
-  console.log(
-    "GLASSES UI CREATED"
-  );
-
-
-  bridge.onAudioEvent(
-    (event: any) => {
-
-      const payload =
-        event?.data ??
-        event;
-
-      if (
-        payload instanceof
-        ArrayBuffer
-      ) {
-        sendAudio(
-          payload
-        );
-
-        return;
-      }
-
-      if (
-        ArrayBuffer.isView(
-          payload
-        )
-      ) {
-        const view =
-          payload as
-          ArrayBufferView;
-
-        const copy =
-          view.buffer.slice(
-            view.byteOffset,
-            view.byteOffset +
-              view.byteLength
-          ) as ArrayBuffer;
-
-        sendAudio(
-          copy
-        );
-      }
-    }
-  );
-
-
-  if (
-    typeof bridge.onEvenHubEvent ===
-    "function"
-  ) {
-    bridge.onEvenHubEvent(
-      (event: any) => {
-
-        console.log(
-          "EVEN SYSTEM EVENT",
-          event
-        );
-
-        /*
-         * Important:
-         * do not close WebSocket here.
-         */
-      }
-    );
-  }
-
-
-  stoppedByUser = false;
-
-  connect();
-
-  await startMicrophone();
-
-
-  const stopButton =
-    document.getElementById(
-      "stop"
-    );
-
-  if (stopButton) {
-
-    stopButton.addEventListener(
-      "click",
-      () => {
-        stopEverything();
-      }
-    );
-  }
-}
-
-
-main().catch(
-  (error) => {
-
-    console.error(
-      "BOOT ERROR",
-      error
-    );
-  }
-);
+$('#start').onclick=async()=>{
+ const token=$<HTMLInputElement>('#token').value.trim();
+ if(!token){status('Enter APP_TOKEN from Render.');return;}
+ if(active)return;
+ active=true;const run=++epoch;$('#start').setAttribute('disabled','');
+ connectionTimer=setTimeout(()=>{if(run===epoch){stop();status('Connection timed out. Check Render is awake and the glasses are connected.');}},45000);
+ try{
+  await connect();if(run!==epoch)return;
+  status('Connecting to Render…');
+  const socket=new WebSocket(`wss://${HOST}/ws/live`);ws=socket;
+  socket.onopen=()=>{if(run!==epoch)return;socket.send(JSON.stringify({type:'auth',token}));};
+  socket.onmessage=event=>{if(ws!==socket)return;try{
+   const m=JSON.parse(String(event.data));
+   if(m.type==='ready'){clearTimeout(connectionTimer);ping=setInterval(()=>send('ping'),10000);next();}
+   else if(m.type==='capture'){
+    armed=Boolean(m.active);if(m.active&&!state.answer)state.question='Listening…';void mic(Boolean(m.active));status(m.active?'Listening — ask one question':'Capture complete — preparing answer');
+   }else if(m.type==='transcript.partial'||m.type==='transcript.final'){
+    $('#transcript').textContent=m.text; if(!state.answer){state.question=m.text;render();}
+   }else if(m.type==='answer.start'){busy=true;state.apply(m);status('Generating answer…');}
+   else if(m.type==='answer.delta'){state.apply(m);}
+   else if(m.type==='answer.done'){busy=false;state.apply(m);status('Answer ready. Tap Next question for a follow-up.');}
+   else if(m.type==='error'){busy=false;armed=false;void mic(false);status(m.message);}
+   else if(m.type==='state')status(m.message);
+   render();
+  }catch{status('Unexpected server message');}};
+  socket.onclose=event=>{if(ws!==socket)return;stop();status(event.code===1008?'Invalid APP_TOKEN. Copy the app token from Render.':'Disconnected. Last answer retained; Start practice opens a new conversation.');};
+  socket.onerror=()=>{status('Backend connection failed. Confirm the live backend has been deployed.');};
+ }catch(e){if(run!==epoch)return;stop();status(e instanceof Error?e.message:String(e));}
+};
+$('#pause').onclick=()=>{armed=false;void mic(false);send('pause');status('Microphone paused — last answer retained');render();};
+$('#stop').onclick=stop;$('#next').onclick=next;
+$('#prev').onclick=()=>{state.page--;render();};$('#page').onclick=()=>{state.page++;render();};
+window.addEventListener('pagehide',stop);render();

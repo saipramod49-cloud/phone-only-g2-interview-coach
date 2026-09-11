@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -302,14 +303,11 @@ async def answer_stream(
 
     model = os.getenv(
         "OPENAI_MODEL",
-        "gpt-5.6-luna",
+        "gpt-5-mini",
     )
 
     payload = {
         "model": model,
-        "reasoning": {
-            "effort": "none",
-        },
         "stream": True,
         "input": [
             {
@@ -334,7 +332,7 @@ async def answer_stream(
                 ),
             },
         ],
-        "max_output_tokens": 220,
+        "max_output_tokens": 1600,
     }
 
     timeout = httpx.Timeout(
@@ -387,6 +385,7 @@ async def answer_stream(
                 )
 
             full = ""
+            completed = False
 
             async for line in response.aiter_lines():
 
@@ -419,20 +418,15 @@ async def answer_stream(
 
                     if delta:
                         full += delta
+                        yield delta
 
-            full = _limit_words(
-                full
-            )
+                if event.get("type") == "response.completed":
+                    completed = True
+                if event.get("type") in ("error", "response.failed", "response.incomplete"):
+                    raise RuntimeError("OpenAI answer stream did not complete")
 
-            if not full:
-                raise RuntimeError(
-                    "OpenAI returned an empty answer"
-                )
-
-            for chunk in _display_chunks(
-                full
-            ):
-                yield chunk
+            if not full or not completed:
+                raise RuntimeError("OpenAI answer stream ended without a complete answer")
 
 
 async def openai_transcription_session():
@@ -505,4 +499,16 @@ async def openai_transcription_session():
         )
     )
 
-    return ws
+    try:
+        async with asyncio.timeout(15):
+            async for raw in ws:
+                event = json.loads(raw)
+                if event.get("type") == "session.updated":
+                    return ws
+                if event.get("type") == "error":
+                    raise RuntimeError("OpenAI rejected transcription configuration")
+            raise RuntimeError("OpenAI transcription connection closed")
+    except BaseException:
+        await ws.close()
+        raise
+

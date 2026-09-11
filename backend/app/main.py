@@ -253,6 +253,7 @@ def health():
         "ok": True,
         "service": "Interview Lens",
         "agent_endpoint": "/v1/chat/completions",
+        "live_protocol": 1,
     }
 
 
@@ -318,6 +319,17 @@ async def chat_completions(
         flush=True,
     )
 
+    # Retain recent context, excluding the newest user question already supplied.
+    history = []
+    for message in messages:
+        if isinstance(message, dict) and message.get("role") in ("user", "assistant"):
+            text = message_text(message.get("content"))
+            if text:
+                history.append(f"{message['role']}: {text[:4000]}")
+    if history and history[-1] == f"user: {question[:4000]}":
+        history.pop()
+    conversation_context = "\n".join(history[-12:])[-16000:]
+
     requested_stream = bool(
         body.get("stream", False)
     )
@@ -377,6 +389,7 @@ async def chat_completions(
                 async for delta in answer_stream(
                     question,
                     grounded,
+                    conversation_context,
                 ):
                     full += delta
 
@@ -496,6 +509,7 @@ async def chat_completions(
         async for delta in answer_stream(
             question,
             grounded,
+            conversation_context,
         ):
             full += delta
 
@@ -2055,3 +2069,8 @@ async function del(id) {
 
 </html>
 '''
+
+
+
+from .live import router as live_router
+app.include_router(live_router)
