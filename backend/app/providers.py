@@ -429,6 +429,20 @@ async def answer_stream(
                 raise RuntimeError("OpenAI answer stream ended without a complete answer")
 
 
+def transcription_diagnostic(error):
+    # Never log exception text, headers, URLs, audio, tokens or API response bodies.
+    fields = {"exception": type(error).__name__}
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    if isinstance(status, int):
+        fields["http_status"] = status
+    if isinstance(error, KeyError) and error.args == ("OPENAI_API_KEY",):
+        fields["reason"] = "OPENAI_API_KEY_missing"
+    if isinstance(error, TimeoutError):
+        fields["reason"] = "OpenAI_setup_timeout"
+    fields.update(getattr(error, "safe_details", {}))
+    return json.dumps(fields)
+
+
 async def openai_transcription_session():
     key = os.environ[
         "OPENAI_API_KEY"
@@ -506,7 +520,16 @@ async def openai_transcription_session():
                 if event.get("type") == "session.updated":
                     return ws
                 if event.get("type") == "error":
-                    raise RuntimeError("OpenAI rejected transcription configuration")
+                    failure = RuntimeError("OpenAI rejected transcription configuration")
+                    details = event.get("error") or {}
+                    # Only machine-readable codes and parameter names, never raw messages.
+                    failure.safe_details = {
+                        name: str(details[name])[:100]
+                        for name in ("type", "code", "param")
+                        if details.get(name) is not None
+                        and re.fullmatch(r"[A-Za-z0-9_.\[\]-]{1,100}", str(details[name]))
+                    }
+                    raise failure
             raise RuntimeError("OpenAI transcription connection closed")
     except BaseException:
         await ws.close()

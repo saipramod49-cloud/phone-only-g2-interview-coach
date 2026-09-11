@@ -11,7 +11,7 @@ import uuid
 from contextlib import suppress
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from .providers import answer_stream, openai_transcription_session
+from .providers import answer_stream, openai_transcription_session, transcription_diagnostic
 from .retrieval import search
 from .storage import active_profile, chunks_for, connect
 
@@ -145,12 +145,15 @@ async def live(ws: WebSocket):
                     listening = True
                     reader = asyncio.create_task(read_stt(stt))
                     await send('capture', active=True)
-                except Exception:
+                except Exception as error:
+                    details = transcription_diagnostic(error)
+                    print('LIVE_TRANSCRIPTION_START_FAILED ' + details, flush=True)
                     await close_capture()
-                    await send('error', message='Could not start transcription. Check OPENAI_API_KEY and model access in Render.')
-    except (WebSocketDisconnect, asyncio.TimeoutError):
-        pass
-    except Exception:
+                    await send('error', message='Could not start transcription: ' + details)
+    except (WebSocketDisconnect, asyncio.TimeoutError) as error:
+        print('LIVE_CONNECTION_ENDED ' + transcription_diagnostic(error), flush=True)
+    except Exception as error:
+        print('LIVE_CONNECTION_FAILED ' + transcription_diagnostic(error), flush=True)
         with suppress(Exception):
             await send('error', message='Live connection failed. Stop and start practice again.')
     finally:
