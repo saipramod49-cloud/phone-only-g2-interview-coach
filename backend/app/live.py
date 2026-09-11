@@ -16,8 +16,8 @@ from .models import account_models, resolve_model, AnswerModelError
 from contextlib import suppress
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Header, HTTPException
-from .providers import answer_stream, openai_transcription_session, transcription_diagnostic, align_candidate_speech
-from .retrieval import search
+from .providers import answer_stream, openai_transcription_session, transcription_diagnostic, align_candidate_speech, assess_turn
+from .retrieval import search_live
 from .storage import active_profile, chunks_for, core_profile_for, connect
 
 router = APIRouter()
@@ -67,6 +67,13 @@ async def live(ws: WebSocket):
     answer_effort = "auto"
     coach_instructions = ""
     stt_started = 0.0
+    turn_mode = 'pause'  # Compatibility for old clients; 0.2.8 selects semantic.
+    diagnostics = False
+    selected_profile_id = None
+    grounding_mode = 'personalized'
+    predecessors = {}
+    revision = 0
+    finish_requested = False
 
     def cancel_endpoint():
         nonlocal endpoint
@@ -74,36 +81,89 @@ async def live(ws: WebSocket):
             endpoint.cancel()
         endpoint = None
 
+    def ordered_items():
+        ordered=[];visiting=set()
+        def add(key):
+            if key in ordered or key in visiting:return
+            visiting.add(key)
+            parent=predecessors.get(key)
+            if parent in segments:add(parent)
+            ordered.append(key)
+        for key in segments:add(key)
+        return ordered
+
     def question_text():
-        return ' '.join(text for text in segments.values() if text).strip()
+        return ' '.join(segments[k] for k in ordered_items() if segments[k]).strip()
+
+    async def flow(phase, **fields):
+        if diagnostics:await send('flow', phase=phase, **fields)
+
+    def consume():
+        submitted_items.extend(segments)
+        segments.clear();completed_items.clear()
 
     async def finish_question(force=False):
-        nonlocal listening, generation
-        if not listening or speaking or any(k not in completed_items for k in segments):
+        nonlocal listening, generation, alignment, finish_requested
+        if not listening:return
+        if speaking or any(k not in completed_items for k in segments):
+            finish_requested = finish_requested or force
             await send('state', message='Waiting for speech transcription to finish…')
             return
         question = question_text()
         if not question:
             await send('state', message='No question captured yet. Keep speaking.')
             return
-        cancel_endpoint()
-        if continuous:
-            roles = {item_roles.get(k, 'unknown') for k in segments}
-            submitted_items.extend(segments)
-            segments.clear()
-            completed_items.clear()
-            if not force and ((speaker_gate and roles != {'interviewer'}) or (not speaker_gate and not question_candidate(question))):
-                await send('state', message='Still listening. Speaker or question was not clear; last answer retained. Use manual Interviewer mode if needed.')
+        check_revision=revision
+        roles={item_roles.get(k,'unknown') for k in segments}
+        role=next(iter(roles)) if len(roles)==1 else 'unknown'
+        retrieval_query=''
+        if not force and turn_mode=='semantic':
+            await flow('checking', text=question)
+            try:
+                result=await assess_turn(question,'\n'.join(history[-6:]),current_answer,role)
+            except asyncio.CancelledError:raise
+            except Exception as error:
+                print('LIVE_TURN_CHECK_FAILED '+transcription_diagnostic(error),flush=True)
+                await flow('waiting', reason='Question check unavailable. Text retained; continue speaking or tap Answer captured question.')
+                await send('state',message='Question check unavailable. Captured story retained. Tap Answer captured question when complete, or choose Pause-based capture.')
                 return
-        else:
-            listening = False
-            await send('capture', active=False)
+            # New speech/settings/pause invalidate an in-flight judgement.
+            if check_revision!=revision or speaking or not listening:return
+            decision=result['decision']
+            if decision=='candidate' and (role=='interviewer' or not current_answer):decision='wait'
+            if decision=='wait':
+                await flow('waiting', reason='Keeping the story and waiting for the complete request.')
+                return
+            if decision in ('candidate','ignore'):
+                consume()
+                if decision=='candidate':
+                    await send('candidate.transcript',text=question)
+                    await flow('following' if voice_follow else 'candidate', estimated=role=='unknown')
+                    if voice_follow and current_answer:
+                        if alignment:alignment.cancel()
+                        alignment=asyncio.create_task(follow(question,current_answer,current_answer_id))
+                else:await flow('listening')
+                return
+            retrieval_query=result['retrieval_query']
+        elif continuous and not force and role!='interviewer' and not question_candidate(question):
+            # Keep narrative setup; only clear an explicit candidate readback.
+            if question.lower().startswith(("i'd ","i would ","i use ","nenu ")):consume()
+            await send('state',message='Still listening. Story context retained; continue or tap Answer captured question.')
+            return
+        if speaker_gate and role!='interviewer' and not force:
+            await flow('waiting',reason='Strict speaker mode is waiting for Interviewer. Text retained; set the role or finish manually.')
+            await send('state',message='Speaker uncertain. Question retained; choose Interviewer or tap Answer captured question.')
+            return
+        cancel_endpoint();finish_requested=False
+        consume()
+        if not continuous:
+            listening=False
+            await send('capture',active=False)
         if generation and not generation.done():
             generation.cancel()
-            with suppress(asyncio.CancelledError):
-                await generation
-        await send('transcript.final', text=question)
-        generation = asyncio.create_task(generate(question))
+            with suppress(asyncio.CancelledError):await generation
+        await send('transcript.final',text=question)
+        generation=asyncio.create_task(generate(question,retrieval_query))
 
     async def finish_after_quiet():
         try:
@@ -117,6 +177,9 @@ async def live(ws: WebSocket):
         cancel_endpoint()
         if segments and not manual_finish and not speaking and all(k in completed_items for k in segments):
             endpoint = asyncio.create_task(finish_after_quiet())
+        if finish_requested and segments and not speaking and all(k in completed_items for k in segments):
+            cancel_endpoint()
+            endpoint = asyncio.create_task(finish_question(force=True))
     send_lock = asyncio.Lock()
 
     async def send(kind, **fields):
@@ -124,8 +187,9 @@ async def live(ws: WebSocket):
             await ws.send_json({'type': kind, **fields})
 
     async def close_capture():
-        nonlocal listening, stt, reader, rate_state
+        nonlocal listening, stt, reader, rate_state, revision
         listening = False
+        revision += 1
         cancel_endpoint()
         if reader and reader is not asyncio.current_task():
             reader.cancel()
@@ -137,28 +201,30 @@ async def live(ws: WebSocket):
             stt = None
         rate_state = None
 
-    async def generate(question):
+    async def generate(question, retrieval_query=""):
         nonlocal last_question, current_answer, current_answer_id
         last_question = question
         requested_model, requested_effort = answer_model, answer_effort
         selected_output_language = output_language
         selected_coach_instructions = coach_instructions
+        request_profile_id=selected_profile_id
+        request_grounding=grounding_mode
         request_started = time.monotonic()
         first_delta = True
         first_text_ms = None
         try:
             selected_answer_model, selected_effort = resolve_model(requested_model, requested_effort)
             with connect() as db:
-                profile = active_profile(db)
-                chunks = chunks_for(db, profile['id'], include_core=False) if profile else []
-                core = core_profile_for(db, profile['id']) if profile else ''
-                evidence = search(chunks, question)
-                if not evidence:
-                    evidence = chunks[:7]
+                profile = db.execute('SELECT * FROM profiles WHERE id=?',(request_profile_id,)).fetchone() if request_profile_id else active_profile(db)
+                if request_profile_id and not profile:raise AnswerModelError('Selected profile no longer exists. Load profiles and select one again.')
+                chunks = chunks_for(db, profile['id'], include_core=False) if profile and request_grounding=='personalized' else []
+                core = core_profile_for(db, profile['id']) if profile and request_grounding=='personalized' else ''
+                evidence = search_live(chunks, (retrieval_query or question))
             grounded = ('[USER-REPORTED CORE PROFILE; facts are not independently verified]\n'+core+'\n\n' if core else '')+'\n\n'.join(f'[{c.source}] {c.text}' for c in evidence)
             answer_id = uuid.uuid4().hex
             current_answer_id = answer_id
             current_answer = ''
+            await flow('generating', sources=[c.source for c in evidence], profile=profile['name'] if profile else '', grounding=request_grounding)
             await send('answer.start', answer_id=answer_id, question=question, model=selected_answer_model, reasoning=selected_effort or 'API default')
             full = ''
             async for delta in answer_stream(question, grounded, '\n'.join(history[-12:])[-16000:], selected_output_language, selected_answer_model, selected_effort or "default", selected_coach_instructions):
@@ -169,6 +235,7 @@ async def live(ws: WebSocket):
                     first_text_ms=round((time.monotonic()-request_started)*1000)
                     print('LIVE_ANSWER_FIRST_TEXT_MS',first_text_ms,flush=True)
                 await send('answer.delta', answer_id=answer_id, text=delta, first_text_ms=first_text_ms)
+            await flow('listening' if listening else 'paused')
             history.extend([f'user: {question}', f'assistant: {full}'])
             del history[:-12]
             await send('answer.done', answer_id=answer_id, text=full, first_text_ms=first_text_ms, total_ms=round((time.monotonic()-request_started)*1000))
@@ -191,7 +258,7 @@ async def live(ws: WebSocket):
             await send('follow.state', message='Could not match speech. Holding the page; ring scrolling is available.')
 
     async def read_stt(connection):
-        nonlocal listening, speaking, alignment
+        nonlocal listening, speaking, alignment, revision
         try:
             async for raw in connection:
                 event = json.loads(raw)
@@ -205,7 +272,9 @@ async def live(ws: WebSocket):
                     continue
                 if kind == 'input_audio_buffer.speech_started':
                     cancel_endpoint()
+                    revision += 1
                     speaking = True
+                    await flow('following' if frame_role=='candidate' and voice_follow else 'candidate' if frame_role=='candidate' else 'listening')
                     segments.setdefault(item, '')
                     starts[item] = event.get('audio_start_ms', timeline.offset)
                 elif kind == 'input_audio_buffer.speech_stopped':
@@ -215,6 +284,7 @@ async def live(ws: WebSocket):
                     segments.setdefault(item, '')
                     schedule_endpoint()
                 elif kind == 'input_audio_buffer.committed':
+                    if 'previous_item_id' in event:predecessors[item]=event['previous_item_id']
                     segments.setdefault(item, '')
                     cancel_endpoint()
                 elif kind == 'conversation.item.input_audio_transcription.delta':
@@ -225,6 +295,8 @@ async def live(ws: WebSocket):
                     role = item_roles.get(item, timeline.role(starts.get(item),timeline.offset))
                     if role != 'candidate':
                         await send('transcript.partial', text=question_text())
+                    elif diagnostics:
+                        await send('candidate.partial',text=segments[item])
                 elif kind == 'conversation.item.input_audio_transcription.completed':
                     if item in completed_items:
                         continue
@@ -235,6 +307,7 @@ async def live(ws: WebSocket):
                         completed_items.discard(item)
                         submitted_items.append(item)
                         await send('candidate.transcript', text=transcript)
+                        await flow('following' if voice_follow else 'candidate')
                         if voice_follow and current_answer:
                             if alignment:
                                 alignment.cancel()
@@ -245,7 +318,7 @@ async def live(ws: WebSocket):
                     completed_items.add(item)
                     await send('transcript.partial', text=question_text())
                     schedule_endpoint()
-                for mapping in (starts, ends, item_roles):
+                for mapping in (starts, ends, item_roles, predecessors):
                     if len(mapping)>512:
                         for key in list(mapping):
                             if key not in segments:
@@ -274,7 +347,7 @@ async def live(ws: WebSocket):
         if hello.get('type') != 'auth':
             await ws.close(code=1008, reason='Authentication required')
             return
-        await send('ready', protocol=1, build='0.2.7', features=['continuous_questions','preparation','display_settings','speaker_follow','model_selection','all_models','coach_instructions','core_profile'])
+        await send('ready', protocol=1, build='0.2.8', features=['continuous_questions','preparation','display_settings','speaker_follow','model_selection','all_models','coach_instructions','core_profile','natural_flow','saved_profile_selection'])
         while True:
             event = await ws.receive()
             if event['type'] == 'websocket.disconnect':
@@ -313,6 +386,30 @@ async def live(ws: WebSocket):
                     alignment.cancel()
                 continue
             if kind in ('listen', 'retry', 'settings'):
+                diagnostics=message.get('flow_events') is True
+                mode=message.get('turn_mode',turn_mode)
+                wait=message.get('quiet_seconds',quiet_seconds)
+                if mode not in ('semantic','pause') or not isinstance(wait,(int,float)) or isinstance(wait,bool) or not 0.5<=wait<=8:
+                    await send('state',message='Choose a capture mode and a pause between 0.5 and 8 seconds.');continue
+                pid=message.get('profile_id',selected_profile_id)
+                if pid is not None:
+                    if not isinstance(pid,str) or len(pid)>100:
+                        await send('state',message='Invalid profile. Load profiles again.');continue
+                    with connect() as db:exists=db.execute('SELECT 1 FROM profiles WHERE id=?',(pid,)).fetchone()
+                    if not exists:
+                        await send('state',message='Profile not found. Load profiles again before starting.');continue
+                new_grounding=message.get('grounding_mode',grounding_mode)
+                if new_grounding not in ('personalized','general'):
+                    await send('state',message='Choose a valid grounding mode.');continue
+                if kind=='settings' and (pid!=selected_profile_id) and (listening or (generation and not generation.done())):
+                    await send('state',message='Stop practice before changing the profile.');continue
+                turn_mode=mode;quiet_seconds=float(wait);selected_profile_id=pid;grounding_mode=new_grounding
+                manual_finish=message.get('manual_finish',manual_finish) is True
+                speaker_gate=message.get('speaker_gate',speaker_gate) is True
+                voice_follow=message.get('voice_follow',voice_follow) is True
+                revision += 1
+                cancel_endpoint()
+                schedule_endpoint()
                 selected_model = message.get('model') or None
                 selected_effort = message.get('reasoning_effort','auto')
                 try:
@@ -339,7 +436,7 @@ async def live(ws: WebSocket):
                     await send('capture',active=False)
                     try:
                         timeline = SpeakerTimeline()
-                        starts.clear(); ends.clear(); item_roles.clear(); submitted_items.clear()
+                        starts.clear(); ends.clear(); item_roles.clear(); predecessors.clear(); submitted_items.clear()
                         stt = await openai_transcription_session()
                         stt_started = time.monotonic()
                         listening = True
@@ -357,6 +454,10 @@ async def live(ws: WebSocket):
                     generation = asyncio.create_task(generate(last_question))
                 else:
                     await send('state', message='No question in this connection yet. Choose Listen and repeat your question.')
+            elif kind == 'clear.question':
+                revision += 1;cancel_endpoint();consume();finish_requested=False
+                await send('transcript.partial',text='')
+                await flow('listening' if listening else 'paused')
             elif kind == 'finish':
                 await finish_question(force=True)
             elif kind == 'pause':
@@ -372,11 +473,12 @@ async def live(ws: WebSocket):
                     completed_items.clear()
                     speaking = False
                     manual_finish = message.get('manual_finish') is True
-                    continuous = message.get('continuous') is True and not manual_finish
+                    continuous = message.get('continuous') is True
+                    finish_requested = False
                     speaker_gate = message.get('speaker_gate') is True
                     voice_follow = message.get('voice_follow') is True
                     timeline = SpeakerTimeline()
-                    starts.clear(); ends.clear(); item_roles.clear()
+                    starts.clear(); ends.clear(); item_roles.clear(); predecessors.clear()
                     submitted_items.clear()
                     stt = await openai_transcription_session()
                     stt_started = time.monotonic()

@@ -27,3 +27,16 @@ export function pageForQuote(pages:string[],quote:string):number|null {
  let end=0;for(let page=0;page<pages.length;page++){end+=compact(pages[page]).length+1;if(index+needle.length<=end)return page;}
  return null;
 }
+
+const speechWords=(s:string)=>s.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)??[];
+// Only move on a unique, multiword match. This follows words, not voice identity.
+export function lineForSpeech(lines:string[],spoken:string):number|null {
+ const words=speechWords(spoken);if(words.length<3)return null;
+ const all=lines.flatMap((text,line)=>speechWords(text).map(word=>({word,line})));
+ for(let size=Math.min(7,words.length);size>=3;size--){
+  const needle=words.slice(-size);const hits:number[]=[];
+  for(let i=0;i<=all.length-size;i++)if(needle.every((w,j)=>w===all[i+j].word))hits.push(all[i+size-1].line);
+  if(hits.length===1)return hits[0];
+ }
+ return null;
+}

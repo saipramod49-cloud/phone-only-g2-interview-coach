@@ -20,3 +20,5 @@ pre{max-width:100%;min-width:0;overflow-wrap:anywhere}
 input[type=file]{padding:10px 4px}
 #documents button{max-width:calc(100% - 24px)}
 @media(max-width:400px){details{padding:12px}h1{font-size:24px}summary{font-size:18px}}
+
+h2{font-size:19px;margin:0 0 10px}.card{margin:16px 0;padding:16px}.card p{margin:10px 0}.button-row{display:flex;gap:10px}.button-row>*{min-width:0;flex:1}.live-controls{margin:20px 0}#mode-status{font-weight:750;padding:12px;background:#173f26;color:white;border-radius:10px}#transcript,#candidate-heard,#full-answer{white-space:pre-wrap;overflow-wrap:anywhere}#transcript{min-height:80px;font-size:18px;line-height:1.5}#candidate-heard:empty{display:none}#candidate-heard{border-top:1px solid #dce4dc;padding-top:12px;color:#526957}#frame{margin:12px 0}#saved-profile-area h2{margin-top:14px}#forget-settings{background:#edf2ed;color:#173f26;border:1px solid #bdc9be}

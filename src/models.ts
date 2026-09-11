@@ -43,5 +43,10 @@ export function mountModels(host:string,token:()=>string,changed:()=>void){
    $('#model-status').textContent=`Loaded ${rows.length} account model IDs. Specialized audio/image models are disabled. Text-model access and streaming support are checked when you request an answer.`;
   }catch(e){$('#model-status').textContent=e instanceof Error?e.message:'Could not load models. Presets and custom IDs remain available.';}finally{button.disabled=false;}
  };
- updateEfforts();return {read};
+ updateEfforts();return {read,restore:(value:{model:string;reasoning_effort:string})=>{
+ const id=typeof value.model==='string'?value.model:'';
+ select.value=Array.from(select.options).some(o=>o.value===id)?id:'__custom__';custom.value=id;
+ $('#custom-model-label').hidden=select.value!=='__custom__';updateEfforts();
+ effort.value=Array.from(effort.options).some(o=>o.value===value.reasoning_effort)?value.reasoning_effort:'auto';
+ }};
 }

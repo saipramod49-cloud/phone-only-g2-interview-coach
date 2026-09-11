@@ -1,5 +1,6 @@
 import {
   waitForEvenAppBridge,
+  AudioInputSource,
   TextContainerProperty,
   CreateStartUpPageContainer,
   TextContainerUpgrade,
@@ -141,11 +142,11 @@ export async function connectG2(callbacks: {
   return {
     show: (s: string) => writer.show(s),
     layout: (value: typeof layout) => {if(JSON.stringify(layout)!==JSON.stringify(value)){layout=value;writer.invalidate();}},
-    mic: (on: boolean) => bridge.audioControl(on),
-    close: () => {
+    mic: (on: boolean) => bridge.audioControl(on, AudioInputSource.Glasses),
+    close: async () => {
       unsub();
       writer.close();
-      void bridge.audioControl(false);
+      await bridge.audioControl(false);
     },
   };
 }

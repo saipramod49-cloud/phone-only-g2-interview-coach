@@ -607,3 +607,24 @@ def search(
 
 
     return results
+
+
+# Live answers use actual content overlap, without injecting unrelated documents
+# or broad topic expansions when no evidence matches.
+LIVE_STOP=set("a an and are as at be been but by can could did do does for from had has have how i if in into is it its me my of on or our should so than that the their them then there these they this those to was we were what when where which who why will with would you your first next explain describe tell about example question answer use used using data project experience approach please".split())
+def search_live(chunks: list[Chunk], query: str, limit: int = 4) -> list[Chunk]:
+    def terms(value):
+        return set(t.lower() for t in re.findall(r"[^\W_]+(?:[+#.-][^\W_]+)*", value, re.UNICODE) if len(t)>1 and t.lower() not in LIVE_STOP)
+    q=terms(query)
+    if not q:return []
+    docs=[terms(c.text) for c in chunks]
+    counts=Counter(t for doc in docs for t in doc)
+    scored=[]
+    for chunk,doc in zip(chunks,docs):
+        overlap=q & doc
+        if not overlap:continue
+        score=sum(math.log(1+len(chunks)/(1+counts[t])) for t in overlap)/math.sqrt(max(1,len(doc)))
+        scored.append((score,chunk))
+    scored.sort(key=lambda item:item[0],reverse=True)
+    if not scored:return []
+    return [chunk for score,chunk in scored[:limit] if score>=scored[0][0]*0.35]
