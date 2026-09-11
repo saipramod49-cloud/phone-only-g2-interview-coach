@@ -53,9 +53,12 @@ LENGTH
 Default answer:
 - 40 to 60 words
 - usually 2 or 3 short sentences
-- absolute maximum: 65 words
+- For multipart questions, use up to 160 words when necessary.
 
-Never exceed 65 words.
+Before answering, identify every explicit subquestion and constraint.
+Answer each part in the order asked, with at least one substantive sentence per part.
+Completeness takes priority over brevity. Do not silently skip the final clause.
+Do not invent missing details; state assumptions briefly.
 
 Give only the most important points.
 The interviewer can ask follow-up questions.
@@ -327,7 +330,7 @@ async def answer_stream(
                     "Answer the newest question first.\n"
                     "Stay consistent with the recent conversation.\n"
                     "Do not treat conversation context as verified work experience.\n"
-                    "Keep the complete answer under 65 words.\n"
+                    "Cover EVERY part of the latest question; allow up to 160 words for multipart questions.\n"
                     "Highlight only 2 to 4 important technical keywords using uppercase."
                 ),
             },

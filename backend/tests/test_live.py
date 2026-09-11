@@ -39,6 +39,7 @@ def test_live_audio_stream_context_and_auth(monkeypatch):
                     assert ws.receive_json()=={'type':'capture','active':True}
                     ws.send_bytes(b'\x00\x01'*1600)
                     assert ws.receive_json()['type']=='transcript.partial'
+                    assert ws.receive_json()['type']=='transcript.partial'
                     assert ws.receive_json()=={'type':'capture','active':False}
                     assert ws.receive_json()['type']=='transcript.final'
                     start=ws.receive_json();assert start['type']=='answer.start'
@@ -88,3 +89,103 @@ def test_provider_streams_before_upstream_finishes(monkeypatch):
         assert await anext(stream)=='second.'
         await stream.aclose()
     with patch('app.providers.httpx.AsyncClient',Client): asyncio.run(run())
+
+
+def test_multipart_capture_waits_for_pending_and_orders_finals(monkeypatch):
+    monkeypatch.setenv('APP_TOKEN', 'test-token')
+    questions = []
+    class Multipart(FakeSTT):
+        async def send(self, raw):
+            self.audio.append(raw)
+            if len(self.audio) == 1:
+                events = [
+                    {'type':'input_audio_buffer.speech_started','item_id':'a'},
+                    {'type':'input_audio_buffer.speech_stopped','item_id':'a'},
+                    {'type':'input_audio_buffer.speech_started','item_id':'b'},
+                    {'type':'input_audio_buffer.speech_stopped','item_id':'b'},
+                    {'type':'conversation.item.input_audio_transcription.completed','item_id':'b','transcript':'When can tombstones be deleted?'},
+                ]
+            else:
+                events = [{'type':'conversation.item.input_audio_transcription.completed','item_id':'a','transcript':'How do retries work?'}]
+            for event in events:
+                await self.queue.put(json.dumps(event))
+    async def connect(): return Multipart()
+    async def answer(question, evidence, context):
+        questions.append(question)
+        yield 'Both parts.'
+    with patch('app.live.openai_transcription_session',connect), patch('app.live.answer_stream',answer), TestClient(app) as client:
+        with client.websocket_connect('/ws/live') as ws:
+            ws.send_json({'type':'auth','token':'test-token'});ws.receive_json()
+            ws.send_json({'type':'listen','manual_finish':True});ws.receive_json()
+            ws.send_bytes(b'\x00\x01'*160)
+            assert ws.receive_json()['type']=='transcript.partial'
+            ws.send_json({'type':'finish'})
+            assert ws.receive_json()['type']=='state'
+            assert questions == []
+            ws.send_bytes(b'\x00\x01'*160)
+            assert ws.receive_json()['text']=='How do retries work? When can tombstones be deleted?'
+            ws.send_json({'type':'finish'})
+            assert ws.receive_json()=={'type':'capture','active':False}
+            assert ws.receive_json()['text']=='How do retries work? When can tombstones be deleted?'
+            assert ws.receive_json()['type']=='answer.start'
+            assert ws.receive_json()['type']=='answer.delta'
+            assert ws.receive_json()['type']=='answer.done'
+            assert questions == ['How do retries work? When can tombstones be deleted?']
+
+
+def test_pause_cancels_pending_question(monkeypatch):
+    monkeypatch.setenv('APP_TOKEN', 'test-token')
+    questions=[]
+    async def connect(): return FakeSTT()
+    async def answer(question,evidence,context):
+        questions.append(question)
+        yield 'Unexpected'
+    with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),TestClient(app) as client:
+        with client.websocket_connect('/ws/live') as ws:
+            ws.send_json({'type':'auth','token':'test-token'});ws.receive_json()
+            ws.send_json({'type':'listen'});ws.receive_json()
+            ws.send_bytes(b'\x00\x01'*160)
+            ws.receive_json();ws.receive_json()
+            ws.send_json({'type':'pause'})
+            assert ws.receive_json()=={'type':'capture','active':False}
+            import time
+            time.sleep(2.1)
+            ws.send_json({'type':'ping'})
+            assert ws.receive_json()['type']=='pong'
+            assert questions==[]
+
+
+def test_second_clause_resets_auto_finish(monkeypatch):
+    monkeypatch.setenv('APP_TOKEN','test-token')
+    questions=[]
+    class TwoParts(FakeSTT):
+        async def send(self, raw):
+            self.audio.append(raw)
+            item=str(len(self.audio))
+            text='How do retries work?' if item=='1' else 'When can tombstones be deleted?'
+            for event in [
+                {'type':'input_audio_buffer.speech_started','item_id':item},
+                {'type':'input_audio_buffer.speech_stopped','item_id':item},
+                {'type':'conversation.item.input_audio_transcription.completed','item_id':item,'transcript':text},
+            ]:
+                await self.queue.put(json.dumps(event))
+    async def connect():return TwoParts()
+    async def answer(question,evidence,context):
+        questions.append(question)
+        yield 'Combined answer'
+    with patch('app.live.openai_transcription_session',connect),patch('app.live.answer_stream',answer),TestClient(app) as client:
+        with client.websocket_connect('/ws/live') as ws:
+            ws.send_json({'type':'auth','token':'test-token'});ws.receive_json()
+            ws.send_json({'type':'listen'});ws.receive_json()
+            ws.send_bytes(b'\x00\x01'*160)
+            assert ws.receive_json()['text']=='How do retries work?'
+            import time
+            time.sleep(0.2)
+            ws.send_bytes(b'\x00\x01'*160)
+            assert ws.receive_json()['text']=='How do retries work? When can tombstones be deleted?'
+            assert ws.receive_json()=={'type':'capture','active':False}
+            assert ws.receive_json()['type']=='transcript.final'
+            assert ws.receive_json()['type']=='answer.start'
+            assert ws.receive_json()['type']=='answer.delta'
+            assert ws.receive_json()['type']=='answer.done'
+            assert questions==['How do retries work? When can tombstones be deleted?']

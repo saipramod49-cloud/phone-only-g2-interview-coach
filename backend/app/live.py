@@ -27,6 +27,49 @@ async def live(ws: WebSocket):
     listening = False
     rate_state = None
     history: list[str] = []
+    endpoint = None
+    segments = {}
+    completed_items = set()
+    speaking = False
+    quiet_seconds = 2.0
+    manual_finish = False
+
+    def cancel_endpoint():
+        nonlocal endpoint
+        if endpoint and endpoint is not asyncio.current_task():
+            endpoint.cancel()
+        endpoint = None
+
+    def question_text():
+        return ' '.join(text for text in segments.values() if text).strip()
+
+    async def finish_question():
+        nonlocal listening, generation
+        if not listening or speaking or any(k not in completed_items for k in segments):
+            await send('state', message='Waiting for speech transcription to finish…')
+            return
+        question = question_text()
+        if not question:
+            await send('state', message='No question captured yet. Keep speaking.')
+            return
+        listening = False
+        cancel_endpoint()
+        await send('capture', active=False)
+        await send('transcript.final', text=question)
+        generation = asyncio.create_task(generate(question))
+
+    async def finish_after_quiet():
+        try:
+            await asyncio.sleep(quiet_seconds)
+            await finish_question()
+        except asyncio.CancelledError:
+            pass
+
+    def schedule_endpoint():
+        nonlocal endpoint
+        cancel_endpoint()
+        if not manual_finish and not speaking and all(k in completed_items for k in segments):
+            endpoint = asyncio.create_task(finish_after_quiet())
     send_lock = asyncio.Lock()
 
     async def send(kind, **fields):
@@ -36,6 +79,7 @@ async def live(ws: WebSocket):
     async def close_capture():
         nonlocal listening, stt, reader, rate_state
         listening = False
+        cancel_endpoint()
         if reader and reader is not asyncio.current_task():
             reader.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -67,8 +111,7 @@ async def live(ws: WebSocket):
             await send('error', message='Answer failed. Check the Render logs and OpenAI configuration; tap Next question to retry.')
 
     async def read_stt(connection):
-        nonlocal listening, generation
-        partial = ''
+        nonlocal listening, speaking
         try:
             async for raw in connection:
                 event = json.loads(raw)
@@ -77,26 +120,42 @@ async def live(ws: WebSocket):
                     raise RuntimeError('Transcription failed')
                 if not listening:
                     continue
-                if kind == 'conversation.item.input_audio_transcription.delta':
-                    partial = (partial + event.get('delta', ''))[-4000:]
-                    await send('transcript.partial', text=partial)
-                elif kind == 'conversation.item.input_audio_transcription.completed':
-                    question = event.get('transcript', '').strip()[:4000]
-                    if not question:
-                        partial = ''
+                item = event.get('item_id', 'legacy')
+                if kind == 'input_audio_buffer.speech_started':
+                    cancel_endpoint()
+                    speaking = True
+                    segments.setdefault(item, '')
+                elif kind == 'input_audio_buffer.speech_stopped':
+                    speaking = False
+                    segments.setdefault(item, '')
+                    schedule_endpoint()
+                elif kind == 'input_audio_buffer.committed':
+                    segments.setdefault(item, '')
+                    cancel_endpoint()
+                elif kind == 'conversation.item.input_audio_transcription.delta':
+                    if item in completed_items:
                         continue
-                    listening = False
-                    await send('capture', active=False)
-                    await send('transcript.final', text=question)
-                    generation = asyncio.create_task(generate(question))
-                    return
-            raise RuntimeError('Transcription disconnected')
+                    cancel_endpoint()
+                    segments[item] = segments.get(item, '') + event.get('delta', '')
+                    await send('transcript.partial', text=question_text())
+                elif kind == 'conversation.item.input_audio_transcription.completed':
+                    if item in completed_items:
+                        continue
+                    segments[item] = event.get('transcript', '').strip()
+                    completed_items.add(item)
+                    await send('transcript.partial', text=question_text())
+                    schedule_endpoint()
+                if len(question_text()) > 12000 or len(segments) > 100:
+                    raise RuntimeError('Question capture limit exceeded')
+            if listening:
+                raise RuntimeError('Transcription disconnected')
         except asyncio.CancelledError:
             raise
         except Exception:
             listening = False
+            cancel_endpoint()
             await send('capture', active=False)
-            await send('error', message='Transcription stopped. Check OpenAI access and tap Next question to retry.')
+            await send('error', message='Transcription stopped or question exceeded the capture limit. Captured text is retained; tap Next question to retry.')
         finally:
             await connection.close()
 
@@ -132,6 +191,8 @@ async def live(ws: WebSocket):
             kind = message.get('type')
             if kind == 'ping':
                 await send('pong')
+            elif kind == 'finish':
+                await finish_question()
             elif kind == 'pause':
                 await close_capture()
                 await send('capture', active=False)
@@ -141,6 +202,10 @@ async def live(ws: WebSocket):
                     continue
                 await close_capture()
                 try:
+                    segments.clear()
+                    completed_items.clear()
+                    speaking = False
+                    manual_finish = message.get('manual_finish') is True
                     stt = await openai_transcription_session()
                     listening = True
                     reader = asyncio.create_task(read_stt(stt))

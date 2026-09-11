@@ -5,14 +5,17 @@ const HOST='phone-only-g2-interview-coach-fawf.onrender.com';
 const state=new LiveState();
 document.querySelector<HTMLDivElement>('#app')!.innerHTML=`
 <h1>Practice Coach · Live test</h1>
-<p>Ask one practice question, then read your answer. Tap Next question when ready for another.</p>
+<p>Ask your complete question. Short pauses are combined; after a quiet pause, your answer starts. Choose manual finish for longer pauses.</p>
 <label>App access token <input id="token" type="password" autocomplete="off" placeholder="Your Render APP_TOKEN"></label>
 <p>Your OpenAI key stays on Render. This token is kept only while this page is open.</p>
+<label><input id="manual" type="checkbox"> Manual finish — wait until I tap Finish question</label>
+<button id="finish" disabled>Finish question</button>
+<h2>Captured question</h2><p id="transcript" aria-live="polite">No question captured yet.</p>
 <button id="start">Start practice</button><button id="next" disabled>Next question</button>
 <button id="pause" disabled>Pause microphone</button><button id="stop">Stop</button>
 <p id="status" role="status">Ready to connect</p><p id="capture">Microphone off</p>
 <pre id="frame"></pre><button id="prev">Previous page</button><button id="page">Next page</button>
-<p id="transcript"></p><p>Glasses: scroll to read; tap for the next question; double-tap to exit.</p>
+<p>Glasses: scroll to read; tap for the next question; double-tap to exit.</p>
 <p>Speaker recognition and speech-follow scrolling are not enabled in this test.</p>`;
 const $=<T extends HTMLElement=HTMLElement>(s:string)=>document.querySelector<T>(s)!;
 let g2: Awaited<ReturnType<typeof connectG2>>|undefined;
@@ -22,8 +25,8 @@ let active=false, busy=false, capture=false, armed=false, epoch=0;
 let ping:ReturnType<typeof setInterval>|undefined;
 let connectionTimer:ReturnType<typeof setTimeout>|undefined;
 const status=(s:string)=>{$('#status').textContent=s;};
-function render(){const f=state.frame();$('#frame').textContent=f;g2?.show(f);$('#next').toggleAttribute('disabled',!active||busy||armed);$('#pause').toggleAttribute('disabled',!active);}
-function send(type:string){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type}));}
+function render(){const f=state.frame();$('#frame').textContent=f;g2?.show(f);$('#finish').toggleAttribute('disabled',!armed||busy);$('#next').toggleAttribute('disabled',!active||busy||armed);$('#pause').toggleAttribute('disabled',!active);}
+function send(type:string){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type,manual_finish:$<HTMLInputElement>('#manual').checked}));}
 // Serialize mic changes so an old enable cannot win after Stop/Pause.
 let micQueue=Promise.resolve();
 function mic(on:boolean){
@@ -37,7 +40,7 @@ function mic(on:boolean){
  return micQueue;
 }
 function stop(){epoch++;active=false;busy=false;armed=false;void mic(false);clearInterval(ping);clearTimeout(connectionTimer);const old=ws;ws=undefined;old?.close();$('#start').removeAttribute('disabled');status('Stopped — last answer retained');render();}
-function next(){if(!active||busy||armed)return;armed=true;status('Starting question capture…');send('listen');render();}
+function next(){if(!active||busy||armed)return;armed=true;$('#transcript').textContent='Listening for the complete question…';status('Starting question capture…');send('listen');render();}
 async function connect(){
  if(connecting)return connecting;
  connecting=(async()=>{try{
@@ -69,7 +72,7 @@ $('#start').onclick=async()=>{
    const m=JSON.parse(String(event.data));
    if(m.type==='ready'){clearTimeout(connectionTimer);ping=setInterval(()=>send('ping'),10000);next();}
    else if(m.type==='capture'){
-    armed=Boolean(m.active);if(m.active&&!state.answer)state.question='Listening…';void mic(Boolean(m.active));status(m.active?'Listening — ask one question':'Capture complete — preparing answer');
+    armed=Boolean(m.active);if(m.active&&!state.answer)state.question='Listening…';void mic(Boolean(m.active));if(m.active)status('Listening — short pauses are allowed');
    }else if(m.type==='transcript.partial'||m.type==='transcript.final'){
     $('#transcript').textContent=m.text; if(!state.answer){state.question=m.text;render();}
    }else if(m.type==='answer.start'){busy=true;state.apply(m);status('Generating answer…');}
@@ -84,6 +87,7 @@ $('#start').onclick=async()=>{
  }catch(e){if(run!==epoch)return;stop();status(e instanceof Error?e.message:String(e));}
 };
 $('#pause').onclick=()=>{armed=false;void mic(false);send('pause');status('Microphone paused — last answer retained');render();};
+$('#finish').onclick=()=>send('finish');
 $('#stop').onclick=stop;$('#next').onclick=next;
 $('#prev').onclick=()=>{state.page--;render();};$('#page').onclick=()=>{state.page++;render();};
 window.addEventListener('pagehide',stop);render();
