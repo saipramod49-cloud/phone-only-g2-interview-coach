@@ -1,6 +1,6 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
 import {Recorder,gesture} from './controller.mjs';
-import {settings,layout,frame,readDelay,deadline} from './reader.mjs';
+import {settings,layout,frame,emphasize,keywordPattern,readDelay,deadline} from './reader.mjs';
 import './style.css';
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
 const backend=el<HTMLInputElement>('backend'),token=el<HTMLInputElement>('token'),mode=el<HTMLSelectElement>('mode');
@@ -8,9 +8,9 @@ let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,c
 let status='Ready',answer='Tap to record a question. Double-tap to finish.',offset=0,view=settings();
 let abort:AbortController|undefined,retryAudio:Uint8Array|undefined,playing=false,autoscroll:ReturnType<typeof setTimeout>|undefined;
 let recovering:ReturnType<typeof setTimeout>|undefined,paintTimer:ReturnType<typeof setTimeout>|undefined,painting=false,dirty=false,rebuild=false;
-let lastAudioAt=0;
+let lastAudioAt=0,lastPaintedAnswer:string|undefined,lastPaintedStatus:string|undefined;
 let inputCount=0,touched=false,apiReady=false,checking=false,questionText='',questionStart=0,firstText=0;
-const inputIds=['rows','words','width','x','y','step','wpm','style'] as const;
+const inputIds=['rows','words','width','x','y','step','wpm','style','navigation','emphasis'] as const;
 function restore(raw:any) {
   backend.value=raw.backend||backend.value;token.value=raw.token||'';mode.value=raw.mode||'tap';view=settings(raw.view);
   for(const id of inputIds)el<HTMLInputElement>(id).value=String(view[id]);
@@ -34,17 +34,21 @@ async function saveSettings(){
 function containers(){
   const box=layout(view);
   return [new TextContainerProperty({containerID:2,containerName:'status',xPosition:box.x,yPosition:box.y,width:box.width,height:26,paddingLength:2,borderWidth:0,isEventCapture:0,content:status.slice(0,38)}),
-    new TextContainerProperty({containerID:1,containerName:'answer',xPosition:box.x,yPosition:box.y+30,width:box.width,height:view.rows*30+8,paddingLength:4,borderWidth:0,isEventCapture:1,content:frame(answer,offset,view).text})];
+    new TextContainerProperty({containerID:1,containerName:'answer',xPosition:box.x,yPosition:box.y+30,width:box.width,height:view.rows*30+8,paddingLength:4,borderWidth:0,isEventCapture:1,content:emphasize(frame(answer,offset,view).text,view)})];
 }
 function render(){
   const f=frame(answer,offset,view);offset=f.start;
-  el('status').textContent=status;el('page').textContent=`Lines ${f.start+1}–${f.end} / ${f.all.length}`;el('display').textContent=f.text;
+  el('status').textContent=status;el('page').textContent=`Lines ${f.start+1}–${f.end} / ${f.all.length}`;el('display').replaceChildren();
+  const preview=el('display');let cursor=0;
+  if(view.emphasis==='on')for(const match of f.text.matchAll(keywordPattern)){preview.append(document.createTextNode(f.text.slice(cursor,match.index)));const mark=document.createElement('mark');mark.textContent=match[0];preview.append(mark);cursor=match.index!+match[0].length;}
+  preview.append(document.createTextNode(f.text.slice(cursor)));
+  el('up').textContent=view.navigation==='page'?'↑ Previous page':'↑ Up';el('down').textContent=view.navigation==='page'?'Next page ↓':'Down ↓';
   el('question').textContent=questionText?`Heard: ${questionText}`:'';
   el<HTMLButtonElement>('start').disabled=recorder.state!=='ready';el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
   el<HTMLButtonElement>('up').disabled=offset===0;el<HTMLButtonElement>('down').disabled=offset>=f.last;
   el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';el('play').textContent=playing?'Pause reading':'Auto-scroll';
-  el('reader-summary').textContent=`${view.rows} lines · up to ${view.words} words/line · ${view.wpm} words/min`;
-  dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},160);
+  el('reader-summary').textContent=`${view.rows} lines · up to ${view.words} words/line · ${view.navigation==='page'?'full pages':'line scrolling'} · left edge ${layout(view).x}px`;
+  dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},80);
 }
 async function paint(){
   if(painting||!bridge||!screenReady||!active)return;
@@ -53,11 +57,16 @@ async function paint(){
     // Coalesce updates: never build up a queue while BLE is slow or disconnected.
     while(dirty&&screenReady&&active){
       dirty=false;
-      if(rebuild){rebuild=false;const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({containerTotalNum:2,textObject:containers()})),5000);if(!ok)throw new Error('Display rebuild failed');}
-      const content=frame(answer,offset,view).text;
-      const a=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:1,containerName:'answer',content})),5000);
-      const b=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:2,containerName:'status',content:status.slice(0,38)})),5000);
-      if(!a||!b)throw new Error('Display update failed');
+      if(rebuild){rebuild=false;const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({containerTotalNum:2,textObject:containers()})),5000);if(!ok)throw new Error('Display rebuild failed');lastPaintedAnswer=undefined;lastPaintedStatus=undefined;}
+      const content=emphasize(frame(answer,offset,view).text,view),label=status.slice(0,38);
+      if(content!==lastPaintedAnswer){
+        const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:1,containerName:'answer',content})),5000);
+        if(!ok)throw new Error('Display update failed');lastPaintedAnswer=content;
+      }
+      if(label!==lastPaintedStatus){
+        const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:2,containerName:'status',content:label})),5000);
+        if(!ok)throw new Error('Status update failed');lastPaintedStatus=label;
+      }
     }
   }catch{screenReady=false;el('connection').textContent='Glasses reconnecting…';scheduleRecovery();}
   finally{painting=false;}
@@ -75,7 +84,7 @@ async function connect(){
     }
     if(created){try{const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({containerTotalNum:2,textObject:containers()})),6000);if(!ok)created=false;}catch{created=false;}}
     if(!created) {const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer({containerTotalNum:2,textObject:containers()})),6000);if(result!==0)throw new Error(`Glasses page unavailable (${result})`);created=true;}
-    screenReady=true;recoveryAttempts=0;el('connection').textContent='Glasses connected';el('hint').textContent='Tap, wait for Listening, then speak. Your last answer stays available after reconnecting.';render();
+    lastPaintedAnswer=undefined;lastPaintedStatus=undefined;screenReady=true;recoveryAttempts=0;el('connection').textContent='Glasses connected';el('hint').textContent='Tap, wait for Listening, then speak. Your last answer stays available after reconnecting.';render();
     if(token.value&&!apiReady)void checkConnection(false);
   }catch(error){screenReady=false;el('connection').textContent=recoveryAttempts>=5?'Open or resume Ring Ask in Even Hub':'Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
   finally{connecting=false;if(!screenReady)scheduleRecovery();}
@@ -95,12 +104,12 @@ function subscribe(){
     }else if(device.isConnected()){recoveryAttempts=0;if(active&&!screenReady)void connect();}
   });
 }
-function scroll(direction:number){playing=false;clearTimeout(autoscroll);offset+=direction*view.step;render();saveAnswer();}
+function scroll(direction:number){playing=false;clearTimeout(autoscroll);offset+=direction*(view.navigation==='page'?view.rows:view.step);render();saveAnswer();}
 function readingTick(){
   clearTimeout(autoscroll);if(!playing||!active)return;
   const f=frame(answer,offset,view);
   if(offset>=f.last){if(recorder.state==='busy'){autoscroll=setTimeout(readingTick,800);return;}playing=false;render();return;}
-  autoscroll=setTimeout(()=>{offset++;render();saveAnswer();readingTick();},readDelay(f.all[offset],view.wpm));
+  autoscroll=setTimeout(()=>{offset+=view.navigation==='page'?view.rows:1;render();saveAnswer();readingTick();},readDelay(view.navigation==='page'?f.text:f.all[offset],view.wpm));
 }
 function dispatch(type:number){
   if(type===1||type===2){scroll(type===1?-1:1);return;}

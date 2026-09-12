@@ -1,4 +1,4 @@
-# Ring Ask 0.2.0
+# Ring Ask 0.2.1
 
 Personal G2/R1 assistant using your existing Render-hosted Sol agent, OpenAI key, bridge token, and candidate profile. Native Even AI is preserved separately.
 
@@ -27,13 +27,13 @@ A recording stops at 90 seconds. A new question does not erase the displayed ans
 ## Setup and launch
 
 Server: https://phone-only-g2-interview-coach-fawf.onrender.com
-Phone page: https://phone-only-g2-interview-coach-fawf.onrender.com/ring/?v=0.2.0
+Phone page: https://phone-only-g2-interview-coach-fawf.onrender.com/ring/?v=0.2.1
 
 Enter the SAME bridge token used by your native Even AI custom agent once, then Save & check connection. The OpenAI API key stays on Render. Settings save automatically after that.
 
 Requires Even Realities app 2.2.10+ and compatible G2/R1 firmware.
 
-QR: Scan the adjacent ring-ask-qr.png inside Even Hub's developer testing scanner. Close the previous prototype first; confirm v0.2.0 in the header. This remains a prototype session, not a persistent installed app.
+QR: Scan the adjacent ring-ask-qr.png inside Even Hub's developer testing scanner. Close the previous prototype first; confirm v0.2.1 in the header. This remains a prototype session, not a persistent installed app.
 
 For an app card and glasses-menu launch, sign into https://hub.evenrealities.com using the same Even account as the phone. Upload ring-ask.ehpk using the portal's private/beta testing flow, install the resulting build in the phone app, then select Ring Ask among the plugins shown in the glasses menu. The prototype cannot add itself to the system menu. No public store submission has been made.
 
@@ -63,3 +63,9 @@ Sources:
 - https://support.evenrealities.com/hc/en-us/articles/13755064994831-Display-Adjustment
 - https://hub.evenrealities.com/docs/build/device-apis
 - https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+
+## Live deployment result
+
+Commit 2e60a93 is live on the existing Render service. A synthetic spoken current-project question produced first words 2.472 seconds after upload started and completed in 3.439 seconds, with 142 streamed text deltas and all 798 answer characters delivered. Native Even AI returned HTTP 200 and invalid-token access returned 401. These timings include upload/transcription/model generation from the Mac, not real ring/BLE/glasses rendering. See v0.2.1-live-verification.json.
+
+Version 0.2.1: horizontal position now moves the left edge up to 284px and narrows the remaining text area. Navigation offers full pages or line scrolling. Keyword emphasis uses phone highlights and capital letters on glasses. Unchanged glasses text/status updates are skipped; stream coalescing reduced to 80ms. Natural responses use spoken examples and aim for 60–100 words. Hardware latency still needs wearer testing.

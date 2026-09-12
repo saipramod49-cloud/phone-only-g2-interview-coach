@@ -21,3 +21,15 @@ test('deadline releases a stuck bridge call',async()=>{
  await assert.rejects(deadline(new Promise(()=>{}),10,'stuck'),/stuck/);
  assert.equal(await deadline(Promise.resolve(true),10),true);
 });
+
+test('right control moves the reading edge and wraps within the remaining canvas',()=>{
+ const left=layout({x:0,width:540}),right=layout({x:100,width:540});
+ assert.equal(left.x,0);assert.equal(right.x,284);assert.equal(right.width,292);
+ assert.ok(lines('one two three four five six seven eight nine',{x:100,width:540}).every(x=>x.length<=20));
+});
+test('complete pages do not repeat the previous page at the end',()=>{
+ const s=settings({rows:3,words:1,navigation:'page'}),text='one\ntwo\nthree\nfour\nfive\nsix\nseven';
+ const pages=[0,3,6].map(offset=>frame(text,offset,s));
+ assert.equal(pages.map(p=>p.text).join('\n'),lines(text,s).join('\n'));
+ assert.equal(pages[2].text,'seven');assert.equal(frame(text,999,s).start,6);
+});
