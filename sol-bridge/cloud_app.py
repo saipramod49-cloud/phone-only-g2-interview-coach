@@ -28,7 +28,7 @@ def app(environ, start_response):
         return [raw]
     path = environ.get('PATH_INFO')
     if path == '/health' and environ.get('REQUEST_METHOD') == 'GET':
-        return reply(200, {'status':'ready','model':model,'profile_loaded':bridge.EXPERIENCE.exists()})
+        return reply(200, {'status':'ready','model':model,'profile_loaded':bridge.EXPERIENCE.exists(),'version':'2026-09-12-bullets-v2'})
     if path != '/v1/chat/completions': return reply(404, {'error':'Not found'})
     if environ.get('REQUEST_METHOD') != 'POST': return reply(405, {'error':'POST required'})
     if not hmac.compare_digest(environ.get('HTTP_AUTHORIZATION',''), 'Bearer '+credentials['bridge_token']):

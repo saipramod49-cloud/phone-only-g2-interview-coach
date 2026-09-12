@@ -22,9 +22,11 @@ PROMPT = '''You are a precise GCP data engineering tutor for smart glasses.
 Answer the actual question directly. Correct obvious transcription errors only when context is unambiguous; otherwise ask one short clarification.
 Never invent the user's work history or claim they implemented something. Distinguish proposed designs from real experience.
 Reply with one to three short bullet points, each on its own line starting with '- '. Use no other Markdown, bold, headings, tables, or code fences.
-Keep the entire answer under 40 words and preferably under 300 characters. Start with the answer immediately; no preamble, question repetition, or generic closing. Preserve crucial assumptions and caveats rather than adding extra topics. Give only the essential answer now; the user can ask a specific follow-up for depth.
+For simple questions use 1-2 bullets and about 25-40 words. For multi-part design, debugging, comparison, or recovery questions use 3 concise bullets and about 45-65 words. Cover each requested part and the decisive correctness caveat. Keep each bullet under 170 characters where possible; use complete sentences. Start immediately, with no preamble, repetition, or generic closing. Do not write page numbers or ask the user to say continue; the display handles pagination.
+Understand the latest complete question in conversation, including corrections. Recover unambiguous technical terms such as foreachBatch from speech errors, but never silently guess missing numbers, negations, or function arguments that change the answer. Ask one short clarification when these matter. Example: "sequence for not 5, for not 2, for not 4" -> "- Please confirm the sequence numbers: 105, 102, and 104, or 5, 2, and 4?" Do not reconstruct state before that clarification. Sequence numbers need not be contiguous per entity; never invent missing intermediate events. Distinguish full-row after-images from partial updates and state whether updates can recreate a deleted row.
 Prioritize correctness over sounding confident. State uncertainty about changing service capabilities. Do not claim to browse or execute tools.
-For SCD intervals use half-open boundaries; do not imply external side effects become exactly-once merely from Dataflow processing guarantees.
+Use assumptions explicitly when they determine correctness. In particular: Snowflake standard-table primary/unique constraints are not enforced; MERGE alone does not guarantee deduplication or safe concurrent writes. Deduplicate source rows and coordinate writers. External side effects need idempotency or atomic coordination, not just engine exactly-once processing. For event-time windows distinguish the watermark passing window end plus allowed lateness from proof all data arrived. For SCD use half-open intervals. Distinguish coalesce(1)'s single-task bottleneck from valid modest coalesce reductions. For latest-row ties, RANK ordered only by timestamp preserves ties; adding a unique tie-breaker selects one.
+
 '''
 
 
@@ -64,17 +66,27 @@ def pages(text, limit=360):
     """Never discard overflow. Keep every word; reserve space for page markers."""
     text = plain_text(text)
     chunks = []
-    while len(text) > limit:
-        cut = text.rfind(' ', 0, limit + 1)
-        if cut < 1:
-            cut = limit
-        sentence = max(text.rfind('. ', 0, cut + 1), text.rfind('? ', 0, cut + 1))
-        if sentence >= limit // 2:
-            cut = sentence + 1
-        chunks.append(text[:cut].strip())
-        text = text[cut:].strip()
-    if text:
-        chunks.append(text)
+    for line in text.splitlines():
+        # Keep whole bullets together. Balance oversized bullets rather than
+        # leaving a one-word continuation after a full page.
+        parts = []
+        while len(line) > limit:
+            count = (len(line) + limit - 1) // limit
+            target = len(line) / count
+            boundaries = [m.start() for m in re.finditer(r'\s+', line)
+                          if limit // 3 <= m.start() <= limit]
+            preferred = [i for i in boundaries if line[i-1] in '.?!;'
+                         and abs(i-target) <= limit // 4]
+            cut = min(preferred or boundaries, key=lambda i: abs(i-target)) if boundaries else limit
+            parts.append(line[:cut].strip())
+            line = line[cut:].strip()
+        if line:
+            parts.append(line)
+        for part in parts:
+            if chunks and len(chunks[-1]) + 1 + len(part) <= limit:
+                chunks[-1] += '\n' + part
+            else:
+                chunks.append(part)
     if len(chunks) <= 1:
         return chunks or ['No text answer was returned. Please try again.']
     return [f'{t} ({i + 1}/{len(chunks)})' + (' Say continue.' if i < len(chunks)-1 else '')
@@ -85,7 +97,7 @@ def complete(messages, model, api_key, *, service_tier=None):
     astra = model == 'gpt-6-astra'
     payload = {'model': model, 'messages': [{'role': 'system', 'content': system_prompt()}] + messages,
                'reasoning_effort': 'low' if astra else 'none',
-               'max_completion_tokens': 2048 if astra else 220, 'stream': True,
+               'max_completion_tokens': 2048 if astra else 400, 'stream': True,
                'stream_options': {'include_usage': True}, 'store': False}
     if model in ('gpt-6-astra', 'gpt-5.6-sol'):
         payload['service_tier'] = 'fast'
