@@ -1,0 +1,44 @@
+import io
+import json
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'cloud'))
+import ring_api
+class Conversation:
+    def ask(self,q,m,k):
+        assert q=='What is a data warehouse?'
+        return 'A store for analytical data.',{}
+class RingTests(unittest.TestCase):
+    def call(self,path='/api/ask',auth='Bearer test',body=b'\0'*6400,method='POST'):
+        status=[]
+        env={'PATH_INFO':path,'REQUEST_METHOD':method,'HTTP_AUTHORIZATION':auth,'CONTENT_TYPE':'application/octet-stream','CONTENT_LENGTH':str(len(body)),'wsgi.input':io.BytesIO(body)}
+        response=ring_api.handle(env,lambda s,h:status.append(s),{'bridge_token':'test','api_key':'fake'},Conversation(),'gpt-5.6-sol')
+        return status,b''.join(response) if response is not None else None
+    def test_bad_token(self):
+        with patch.object(ring_api,'transcribe') as transcribe:
+            status,_=self.call(auth='Bearer wrong');self.assertIn('401',status[0]);transcribe.assert_not_called()
+    def test_invalid_audio(self):
+        for body in [b'',b'1'*6401,b'1'*2880002]:
+            status,_=self.call(body=body);self.assertIn('400',status[0])
+    def test_submission_uses_existing_conversation(self):
+        with patch.object(ring_api,'transcribe',return_value='What is a data warehouse?'):
+            status,body=self.call();events=[json.loads(line) for line in body.splitlines()]
+            self.assertEqual(status,['200 OK']);self.assertEqual([e['type'] for e in events],['transcript','delta','done']);self.assertIn('analytical',events[1]['text'])
+    def test_failure_unlocks_next_question(self):
+        with patch.object(ring_api,'transcribe',side_effect=RuntimeError('private details')):
+            _,body=self.call();self.assertNotIn(b'private details',body);self.assertIn(b'error',body)
+        self.assertFalse(ring_api._busy.locked())
+    def test_existing_native_route_is_untouched(self):
+        status,body=self.call(path='/v1/chat/completions');self.assertEqual(status,[]);self.assertIsNone(body)
+    def test_wav_format(self):
+        import wave
+        raw=ring_api.wav_file(b'\0'*6400)
+        with wave.open(io.BytesIO(raw)) as r:
+            self.assertEqual(r.getframerate(),16000);self.assertEqual(r.getnchannels(),1);self.assertEqual(r.getsampwidth(),2);self.assertEqual(r.getnframes(),3200)
+    def test_preflight(self):
+        status,_=self.call(method='OPTIONS',auth='');self.assertIn('204',status[0])
+    def test_static_traversal(self):
+        status,_=self.call(path='/ring/../bridge.py',method='GET');self.assertIn('404',status[0])
+if __name__=='__main__':unittest.main()

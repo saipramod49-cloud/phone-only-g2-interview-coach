@@ -1,0 +1,20 @@
+{
+  "name": "ring-ask",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "test": "node --test tests/*.test.mjs",
+    "pack": "npm run build && evenhub pack app.json dist --sdk-ver 0.0.15 -o ring-ask.ehpk"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.15"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.1.14",
+    "vite": "latest",
+    "typescript": "latest"
+  }
+}
