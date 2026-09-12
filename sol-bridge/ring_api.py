@@ -9,6 +9,8 @@ import urllib.request
 import urllib.error
 import uuid
 import wave
+import time
+import ring_agent
 from pathlib import Path
 
 ROOT = Path(__file__).parent / 'ring-ui'
@@ -40,7 +42,7 @@ def transcribe(pcm, key):
 def handle(environ, start_response, credentials, conversation, model):
     path = environ.get('PATH_INFO', '')
     method = environ.get('REQUEST_METHOD', 'GET')
-    cors = [('Access-Control-Allow-Origin','*'),('Access-Control-Allow-Headers','Authorization, Content-Type'),
+    cors = [('Access-Control-Allow-Origin','*'),('Access-Control-Allow-Headers','Authorization, Content-Type, X-Answer-Style'),
             ('Access-Control-Allow-Methods','GET, POST, OPTIONS'),('Cache-Control','no-store')]
     def reply(status, data):
         raw = json.dumps(data).encode()
@@ -60,7 +62,7 @@ def handle(environ, start_response, credentials, conversation, model):
     if not hmac.compare_digest(environ.get('HTTP_AUTHORIZATION',''),'Bearer '+credentials['bridge_token']):
         return reply('401 Unauthorized', {'error':'Enter the bridge token already used by your Even AI agent.'})
     if path == '/api/health' and method == 'GET':
-        return reply('200 OK', {'configured': bool(credentials.get('api_key')), 'model':model})
+        return reply('200 OK', {'configured': bool(credentials.get('api_key')), 'model':model, 'profile_loaded':ring_agent.bridge.EXPERIENCE.exists(), 'version':'0.2.0'})
     if path != '/api/ask': return reply('404 Not Found', {'error':'Not found'})
     if method != 'POST': return reply('405 Method Not Allowed', {'error':'POST required'})
     if environ.get('CONTENT_TYPE','').split(';')[0] != 'application/octet-stream':
@@ -69,21 +71,25 @@ def handle(environ, start_response, credentials, conversation, model):
         size = int(environ.get('CONTENT_LENGTH','0'))
         if not 6400 <= size <= 2880000 or size % 2: raise ValueError()
     except (TypeError,ValueError): return reply('400 Bad Request', {'error':'Record between 0.2 and 90 seconds.'})
-    if not _busy.acquire(blocking=False): return reply('429 Too Many Requests', {'error':'A question is already processing.'})
     try:
         pcm = environ['wsgi.input'].read(size)
         if len(pcm) != size: raise ValueError('Incomplete audio')
     except Exception:
-        _busy.release(); return reply('400 Bad Request', {'error':'Incomplete audio. Try again.'})
-    start_response('200 OK', cors + [('Content-Type','application/x-ndjson'),('X-Accel-Buffering','no')])
+        return reply('400 Bad Request', {'error':'Incomplete audio. Try again.'})
     def events():
+        if not _busy.acquire(blocking=False):
+            yield from reply('429 Too Many Requests', {'error':'A question is already processing.'})
+            return
         def event(kind, **values): return (json.dumps({'type':kind, **values})+'\n').encode()
         try:
+            start_response('200 OK', cors + [('Content-Type','application/x-ndjson'),('X-Accel-Buffering','no')])
+            start=time.perf_counter()
+            yield event('status', text='Transcribing question…')
             question = transcribe(pcm, credentials['api_key'])
-            yield event('transcript', text=question)
-            answer, _metrics = conversation.ask(question, model, credentials['api_key'])
-            yield event('delta', text=answer)
-            yield event('done')
+            yield event('transcript', text=question, transcriptionMs=round((time.perf_counter()-start)*1000))
+            style=environ.get('HTTP_X_ANSWER_STYLE','natural')
+            for item in ring_agent.conversation.stream(question, model, credentials['api_key'], style):
+                yield (json.dumps(item)+'\n').encode()
         except urllib.error.HTTPError as error:
             yield event('error', text='OpenAI request failed (HTTP %s). Check API access and billing.' % error.code)
         except Exception:

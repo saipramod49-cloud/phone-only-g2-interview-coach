@@ -22,16 +22,27 @@ class RingTests(unittest.TestCase):
     def test_invalid_audio(self):
         for body in [b'',b'1'*6401,b'1'*2880002]:
             status,_=self.call(body=body);self.assertIn('400',status[0])
-    def test_submission_uses_existing_conversation(self):
-        with patch.object(ring_api,'transcribe',return_value='What is a data warehouse?'):
+    def test_submission_streams_full_ring_answer(self):
+        with patch.object(ring_api,'transcribe',return_value='What is a data warehouse?'), patch.object(ring_api.ring_agent.conversation,'stream',return_value=iter([{'type':'delta','text':'A store for analytical data.'},{'type':'delta','text':' More detail.'},{'type':'done'}])):
             status,body=self.call();events=[json.loads(line) for line in body.splitlines()]
-            self.assertEqual(status,['200 OK']);self.assertEqual([e['type'] for e in events],['transcript','delta','done']);self.assertIn('analytical',events[1]['text'])
+            self.assertEqual(status,['200 OK']);self.assertEqual([e['type'] for e in events],['status','transcript','delta','delta','done']);self.assertIn('analytical',events[2]['text'])
     def test_failure_unlocks_next_question(self):
         with patch.object(ring_api,'transcribe',side_effect=RuntimeError('private details')):
             _,body=self.call();self.assertNotIn(b'private details',body);self.assertIn(b'error',body)
         self.assertFalse(ring_api._busy.locked())
     def test_existing_native_route_is_untouched(self):
         status,body=self.call(path='/v1/chat/completions');self.assertEqual(status,[]);self.assertIsNone(body)
+    def test_busy_request_does_not_hold_a_second_lock(self):
+        ring_api._busy.acquire()
+        try:
+            status,_=self.call();self.assertIn('429',status[0])
+        finally:ring_api._busy.release()
+    def test_closing_stream_releases_request_lock(self):
+        env={'PATH_INFO':'/api/ask','REQUEST_METHOD':'POST','HTTP_AUTHORIZATION':'Bearer test','CONTENT_TYPE':'application/octet-stream','CONTENT_LENGTH':'6400','wsgi.input':io.BytesIO(b'\0'*6400)}
+        stream=ring_api.handle(env,lambda s,h:None,{'bridge_token':'test','api_key':'fake'},Conversation(),'gpt-5.6-sol')
+        self.assertFalse(ring_api._busy.locked())
+        next(stream);self.assertTrue(ring_api._busy.locked())
+        stream.close();self.assertFalse(ring_api._busy.locked())
     def test_wav_format(self):
         import wave
         raw=ring_api.wav_file(b'\0'*6400)
