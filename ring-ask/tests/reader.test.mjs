@@ -22,10 +22,16 @@ test('deadline releases a stuck bridge call',async()=>{
  assert.equal(await deadline(Promise.resolve(true),10),true);
 });
 
-test('right control moves the reading edge and wraps within the remaining canvas',()=>{
- const left=layout({x:0,width:540}),right=layout({x:100,width:540});
- assert.equal(left.x,0);assert.equal(right.x,284);assert.equal(right.width,292);
- assert.ok(lines('one two three four five six seven eight nine',{x:100,width:540}).every(x=>x.length<=20));
+test('position changes never shrink the block or rewrap the answer',()=>{
+ const text='I use Snowflake SQL to reconcile the final extracts before publication.';
+ for(const width of [360,440,540,564]){
+  const reference=lines(text,{width,x:0});
+  for(const x of [0,25,50,75,100]){
+   const box=layout({width,x});assert.equal(box.width,width);
+   assert.deepEqual(lines(text,{width,x}),reference);
+   assert.equal(box.x,Math.round((576-width)*x/100));
+  }
+ }
 });
 test('complete pages do not repeat the previous page at the end',()=>{
  const s=settings({rows:3,words:1,navigation:'page'}),text='one\ntwo\nthree\nfour\nfive\nsix\nseven';

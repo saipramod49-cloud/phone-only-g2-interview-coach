@@ -1,14 +1,14 @@
-export const defaults = {rows:4,words:7,width:540,x:50,y:50,step:1,wpm:120,style:'natural',navigation:'line',emphasis:'on'};
+export const defaults = {rows:4,words:7,width:440,x:50,y:50,step:1,wpm:120,style:'natural',navigation:'line',emphasis:'on'};
 const clamp=(n,lo,hi,fallback)=>Number.isFinite(Number(n))?Math.max(lo,Math.min(hi,Math.round(Number(n)))):fallback;
 export function settings(raw={}) {
-  return {rows:clamp(raw.rows,2,7,4),words:clamp(raw.words,2,12,7),width:clamp(raw.width,280,564,540),
+  return {rows:clamp(raw.rows,2,7,4),words:clamp(raw.words,2,12,7),width:clamp(raw.width,360,564,440),
     x:clamp(raw.x,0,100,50),y:clamp(raw.y,0,100,50),step:clamp(raw.step,1,3,1),wpm:clamp(raw.wpm,60,240,120),
     navigation:raw.navigation==='page'?'page':'line',emphasis:raw.emphasis==='off'?'off':'on',
     style:['brief','natural','detailed'].includes(raw.style)?raw.style:'natural'};
 }
 export function layout(raw) {
   const s=settings(raw),height=38+s.rows*30;
-  const x=Math.round(284*s.x/100),width=Math.min(s.width,576-x);
+  const width=s.width,x=Math.round((576-width)*s.x/100);
   return {width,height,x,y:Math.round((288-height)*s.y/100)};
 }
 export function lines(text,raw) {

@@ -4,3 +4,5 @@ html,body{width:100%;height:100%;overflow:hidden}main{height:100%;height:100dvh;
 .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}.settings-grid input,.settings-grid select{font-size:16px;min-height:44px}.settings-grid input[type=range]{padding:0;accent-color:#b1d395}#question{color:#bdc9b8;font-size:14px;line-height:1.5}#timing,#reader-summary{font-size:12px;color:#91a18e}summary{display:flex;align-items:center}summary::before{content:'▸';margin-right:8px}details[open]>summary::before{content:'▾'}details.setup{padding:14px 16px}.lens{min-height:200px}h1{font-size:30px}.foot{padding-bottom:20px}@media(max-width:380px){.settings-grid{grid-template-columns:1fr}.controls button{padding:12px 9px}}
 
 mark{background:#a7ef90;color:#10220b;border-radius:3px;padding:0 1px}
+
+#geometry{position:relative;aspect-ratio:2;background:#040c07;border:1px solid #576b4e;margin-top:16px}#geometry-box{position:absolute;border:1px solid #b3ed98;background:#b3ed9820;display:grid;place-items:center;font-size:12px}#full-answer{white-space:pre-wrap;line-height:1.65}

@@ -13,6 +13,8 @@ let inputCount=0,touched=false,apiReady=false,checking=false,questionText='',que
 const inputIds=['rows','words','width','x','y','step','wpm','style','navigation','emphasis'] as const;
 function restore(raw:any) {
   backend.value=raw.backend||backend.value;token.value=raw.token||'';mode.value=raw.mode||'tap';view=settings(raw.view);
+  // Earlier releases coupled movement to shrinking width; migrate once to a stable centered block.
+  if(raw.readerVersion!==3)view=settings({...raw.view,width:440,x:50});
   for(const id of inputIds)el<HTMLInputElement>(id).value=String(view[id]);
 }
 try {restore(JSON.parse(localStorage.getItem('ring-ask-settings')||'{}'));const old=JSON.parse(localStorage.getItem('ring-ask-answer')||'{}');if(old.answer){answer=old.answer;offset=old.offset||0;status='Saved answer';questionText=old.question||'';}}
@@ -26,14 +28,15 @@ const recorder=new Recorder(async(on:boolean)=>{
 recorder.mode=mode.value;
 function saveAnswer(){try{localStorage.setItem('ring-ask-answer',JSON.stringify({answer,offset,question:questionText}));}catch{}}
 async function saveSettings(){
-  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),mode:mode.value,view});
+  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),mode:mode.value,view,readerVersion:3});
   let saved=false;try{localStorage.setItem('ring-ask-settings',raw);saved=true;}catch{}
   if(bridge)try{await deadline(bridge.setLocalStorage('ring-ask-settings',raw),2500);saved=true;}catch{}
   return saved;
 }
+function lensStatus(){const f=frame(answer,offset,view);return `${f.start+1}-${f.end}/${f.all.length} ${f.end<f.all.length?'Swipe down':'End'} · ${status}`.slice(0,42);}
 function containers(){
   const box=layout(view);
-  return [new TextContainerProperty({containerID:2,containerName:'status',xPosition:box.x,yPosition:box.y,width:box.width,height:26,paddingLength:2,borderWidth:0,isEventCapture:0,content:status.slice(0,38)}),
+  return [new TextContainerProperty({containerID:2,containerName:'status',xPosition:box.x,yPosition:box.y,width:box.width,height:26,paddingLength:2,borderWidth:0,isEventCapture:0,content:lensStatus()}),
     new TextContainerProperty({containerID:1,containerName:'answer',xPosition:box.x,yPosition:box.y+30,width:box.width,height:view.rows*30+8,paddingLength:4,borderWidth:0,isEventCapture:1,content:emphasize(frame(answer,offset,view).text,view)})];
 }
 function render(){
@@ -43,6 +46,9 @@ function render(){
   if(view.emphasis==='on')for(const match of f.text.matchAll(keywordPattern)){preview.append(document.createTextNode(f.text.slice(cursor,match.index)));const mark=document.createElement('mark');mark.textContent=match[0];preview.append(mark);cursor=match.index!+match[0].length;}
   preview.append(document.createTextNode(f.text.slice(cursor)));
   el('up').textContent=view.navigation==='page'?'↑ Previous page':'↑ Up';el('down').textContent=view.navigation==='page'?'Next page ↓':'Down ↓';
+  el('full-answer').textContent=answer;
+  const box=layout(view);el('geometry-box').style.cssText=`left:${box.x/576*100}%;top:${box.y/288*100}%;width:${box.width/576*100}%;height:${box.height/288*100}%`;
+  el('geometry-box').textContent=`${box.width}px wide · ${view.rows} lines`;
   el('question').textContent=questionText?`Heard: ${questionText}`:'';
   el<HTMLButtonElement>('start').disabled=recorder.state!=='ready';el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
   el<HTMLButtonElement>('up').disabled=offset===0;el<HTMLButtonElement>('down').disabled=offset>=f.last;
@@ -58,13 +64,13 @@ async function paint(){
     while(dirty&&screenReady&&active){
       dirty=false;
       if(rebuild){rebuild=false;const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({containerTotalNum:2,textObject:containers()})),5000);if(!ok)throw new Error('Display rebuild failed');lastPaintedAnswer=undefined;lastPaintedStatus=undefined;}
-      const content=emphasize(frame(answer,offset,view).text,view),label=status.slice(0,38);
+      const content=emphasize(frame(answer,offset,view).text,view),label=lensStatus();
       if(content!==lastPaintedAnswer){
-        const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:1,containerName:'answer',content})),5000);
+        const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:1,containerName:'answer',content,contentOffset:0,contentLength:0})),5000);
         if(!ok)throw new Error('Display update failed');lastPaintedAnswer=content;
       }
       if(label!==lastPaintedStatus){
-        const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:2,containerName:'status',content:label})),5000);
+        const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:2,containerName:'status',content:label,contentOffset:0,contentLength:0})),5000);
         if(!ok)throw new Error('Status update failed');lastPaintedStatus=label;
       }
     }
@@ -169,6 +175,8 @@ mode.onchange=()=>{touched=true;void recorder.dispatch(5).then(()=>{recorder.mod
 for(const id of inputIds)el<HTMLInputElement>(id).onchange=()=>{
   touched=true;const values=Object.fromEntries(inputIds.map(key=>[key,el<HTMLInputElement>(key).value]));view=settings(values);offset=0;rebuild=true;render();readingTick();void saveSettings();
 };
+el('reset-reader').onclick=()=>{view=settings({width:440,x:50,rows:4,words:7,navigation:'page'});for(const id of inputIds)el<HTMLInputElement>(id).value=String(view[id]);offset=0;rebuild=true;render();void saveSettings();};
+el('calibrate').onclick=()=>{if(recorder.state!=='ready')return;status='Lens layout test';answer=Array.from({length:16},(_,i)=>`${i+1}. Read this complete line.`).join('\n');offset=0;render();saveAnswer();};
 el('demo').onclick=()=>{if(recorder.state!=='ready')return;status='Reading sample';answer="Right now, my work is focused on the QFC regulatory reporting platform at Mizuho. I work with Snowflake SQL and TIDAL to move source data through staging, work, and extract tables.\n\nA big part of my role is checking that the final extracts reconcile correctly before publication. That means tracing missing records, duplicate positions, and mapping issues back through the transformations rather than assuming a successful load means the data is correct.";offset=0;render();saveAnswer();};
 function resume(){active=true;recoveryAttempts=0;if(!screenReady)void connect();if(token.value)void checkConnection(false);render();}
 window.addEventListener('online',resume);window.addEventListener('pageshow',resume);
