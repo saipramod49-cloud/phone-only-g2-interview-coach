@@ -68,13 +68,20 @@ el('up').onclick=()=>dispatch(1);el('down').onclick=()=>dispatch(2);
 el('exit').onclick=async()=>{abort?.abort();await recorder.dispatch(5);await bridge?.shutDownPageContainer(1);};
 mode.onchange=()=>{abort?.abort();void recorder.dispatch(5).then(()=>{recorder.mode=mode.value;});};
 el('save').onclick=async()=>{
+  const save=el<HTMLButtonElement>('save');
+  save.disabled=true; save.textContent='Checking…'; el('health').textContent='Checking connection…';
+  const check=new AbortController(); const checkTimer=setTimeout(()=>check.abort(),10000);
   try {
     const url=new URL(backend.value);if(!['http:','https:'].includes(url.protocol))throw new Error('Enter an HTTP or HTTPS server URL.');
-    localStorage.setItem('ring-ask-settings',JSON.stringify({backend:backend.value,token:token.value,mode:mode.value}));
-    const response=await fetch(backend.value.replace(/\/$/,'')+'/api/health',{headers:{Authorization:`Bearer ${token.value}`},signal:AbortSignal.timeout(10000)});
+    backend.value=backend.value.trim().replace(/\/$/,''); token.value=token.value.trim();
+    if(!token.value) throw new Error('Enter your existing bridge token first.');
+    let saved=true;
+    try { localStorage.setItem('ring-ask-settings',JSON.stringify({backend:backend.value,token:token.value,mode:mode.value})); } catch { saved=false; }
+    const response=await fetch(backend.value.replace(/\/$/,'')+'/api/health',{headers:{Authorization:`Bearer ${token.value}`},signal:check.signal});
     const result=await response.json();if(!response.ok)throw new Error(result.error||'Connection failed.');
-    el('health').textContent=result.configured?'Connected. Ready for questions.':'Connected. Add the OpenAI key to the server configuration.';
-  }catch(error){el('health').textContent=(error as Error).message;}
+    el('health').textContent=result.configured?(saved?'Connected. Ready for questions.':'Connected for this session. Settings storage is unavailable.'):'Connected. Add the OpenAI key to the server configuration.';
+  }catch(error){el('health').textContent=check.signal.aborted?'Connection timed out. Check your internet and try again.':(error as Error).message;}
+  finally {clearTimeout(checkTimer);save.disabled=false;save.textContent='Save & check connection';}
 };
 el('demo').onclick=()=>{if(recorder.state!=='ready')return;status='Sample answer · no AI call';page=0;answer='Manual capture gives you control over the question.\n\nTap once before speaking. Wait until the display says Listening. Double-tap when the question is complete.\n\nThe microphone then stops. Your selected audio goes to the AI server for transcription and an answer.\n\nScroll the ring to move through these pages. Tap again when you want to ask another question.';render();};
 window.addEventListener('pagehide',()=>{abort?.abort();void recorder.dispatch(5);});
@@ -84,6 +91,14 @@ void (async()=>{
   const result=await bridge.createStartUpPageContainer(new CreateStartUpPageContainer({containerTotalNum:1,textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:0,yPosition:0,width:576,height:288,paddingLength:6,borderWidth:0,isEventCapture:1,content:'Ring Ask\n\nTap to listen.\nDouble-tap to submit.\nScroll to read.'})]}));
   if(result!==0) throw new Error(`Glasses page failed to initialize (${result}).`);
   screenReady=true;el('connection').textContent='Even bridge connected';el('hint').textContent='Ready. Wait for Listening before speaking.';
-  bridge.onEvenHubEvent(event=>{if(event.audioEvent)recorder.audio(event.audioEvent.audioPcm);const type=gesture(event);if(type!==null)dispatch(type);});
+  let inputCount=0;
+  bridge.onEvenHubEvent(event=>{
+    if(event.audioEvent)recorder.audio(event.audioEvent.audioPcm);
+    const type=gesture(event);
+    if(type!==null){
+      if([0,1,2,3,9,10].includes(type)) el('input-status').textContent=`Ring/glasses events: ${++inputCount} · last ${['tap','up','down','double tap'][type]|| (type===9?'hold':'release')} · ${recorder.state}`;
+      dispatch(type);
+    }
+  });
   render();
 })().catch(error=>{el('connection').textContent='Glasses connection unavailable';el('hint').textContent=error.message;});
