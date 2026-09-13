@@ -59,3 +59,18 @@ test('full-screen pages retain the complete answer through the last page',async(
  assert.equal(restored,text);assert.equal(fullPage(text,999).page,count-1);
  assert.ok(Array.from({length:count},(_,i)=>fullPage(text,i).text.split('\n').length).every(n=>n<=9));
 });
+
+test('new reading settings cap lines and words at ten',async()=>{
+ const {readingSettings,fullPage,measuredPage}=await import('../src/reader.mjs');
+ assert.deepEqual(readingSettings({rows:99,words:99,font:'bogus'}),{rows:10,words:10,font:'native'});
+ const text='one two three four five six seven eight nine ten eleven twelve '.repeat(30).trim();
+ for(const rows of [1,5,10])for(const words of [1,4,10]){
+  const p=fullPage(text,0,{rows,words});assert.ok(p.text.split('\n').length<=rows);
+  assert.ok(p.text.split('\n').every(line=>line.split(/\s+/).length<=words));
+ }
+ const large=measuredPage(text,0,{rows:10,words:10,font:'30'},x=>x.length*16);
+ assert.equal(large.rows,8);assert.ok(large.text.split('\n').length<=8);
+ const n=large.count;
+ const reconstructed=Array.from({length:n},(_,i)=>measuredPage(text,i,{rows:10,words:10,font:'30'},x=>x.length*16).text).join(' ').replace(/\s+/g,' ');
+ assert.equal(reconstructed,text);
+});

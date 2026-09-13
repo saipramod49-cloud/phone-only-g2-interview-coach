@@ -1,7 +1,7 @@
-# Ring Ask v0.3.2
+# Ring Ask v0.4.0
 
-Tap starts listening. Hold continues the same recording; release stops and submits. Hold alone also starts recording. Double-tap is ignored. Swipe down/up for next/previous full-screen answer pages. Keep Ring Ask open in Even Hub. Speak after Listening appears.
+Tap starts listening. Hold continues the same recording; release stops and submits. Hold alone also starts. Double-tap is ignored. Swipe down/up for next/previous answer pages.
 
-Phone: press and hold the microphone button, then release; Stop & answer is an alternate stop button.
+Reading settings: Native font (default, fastest) or image-rendered 18/22/26/30px; 1–10 maximum visible lines; 1–10 maximum words per line. Larger fonts fit fewer lines and words. Numbered sizes use four PNG tiles and may update more slowly over Bluetooth. Select Native to return to the original text renderer. Settings save automatically. Native width/position stays full-screen.
 
-Build and 22 tests pass, including tap then hold without microphone restart, release submission, and complete pagination. Physical R1 event delivery still needs wearer testing.
+Build, 23 tests, and SDK five-container validation pass. Custom image fonts require physical glasses testing. Ring routing remains the same as v0.3.2.

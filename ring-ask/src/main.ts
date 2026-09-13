@@ -1,16 +1,18 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
 import {Recorder,gesture,controlAction} from './controller.mjs';
-import {fullPage,deadline} from './reader.mjs';
+import {fullPage,readingSettings,deadline} from './reader.mjs';
 import './style.css';
+import {bitmapPage,imageContainers,BitmapDisplay} from './bitmap';
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
 const backend=el<HTMLInputElement>('backend'),token=el<HTMLInputElement>('token');
 let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,connecting=false,recoveryAttempts=0;
+let reading=readingSettings(),layoutDirty=false;const bitmap=new BitmapDisplay();
 let status='Ready',answer='',offset=0;
 let abort:AbortController|undefined,retryAudio:Uint8Array|undefined;
 let recovering:ReturnType<typeof setTimeout>|undefined,paintTimer:ReturnType<typeof setTimeout>|undefined,painting=false,dirty=false;
 let lastAudioAt=0,lastPaintedAnswer:string|undefined;
 let inputCount=0,touched=false,apiReady=false,checking=false,questionText='',questionStart=0,firstText=0;
-function restore(raw:any) {backend.value=raw.backend||backend.value;token.value=raw.token||'';}
+function restore(raw:any) {backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);for(const id of ['font','rows','words'] as const)el<HTMLInputElement>(id).value=String(reading[id]);}
 try {restore(JSON.parse(localStorage.getItem('ring-ask-settings')||'{}'));const old=JSON.parse(localStorage.getItem('ring-ask-answer')||'{}');if(old.answer){answer=old.answer;offset=0;status='Saved answer';questionText=old.question||'';}}
 catch{restore({});}
 const recorder=new Recorder(async(on:boolean)=>{
@@ -22,25 +24,31 @@ const recorder=new Recorder(async(on:boolean)=>{
 recorder.mode='press';
 function saveAnswer(){try{localStorage.setItem('ring-ask-answer',JSON.stringify({answer,offset,question:questionText}));}catch{}}
 async function saveSettings(){
-  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim()});
+  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading});
   let saved=false;try{localStorage.setItem('ring-ask-settings',raw);saved=true;}catch{}
   if(bridge)try{await deadline(bridge.setLocalStorage('ring-ask-settings',raw),2500);saved=true;}catch{}
   return saved;
 }
+function answerPage(text:string,index:number){return reading.font==='native'?fullPage(text,index,reading):bitmapPage(text,index,reading);}
 function lensContent(){
  if(['starting','listening','stopping'].includes(recorder.state))return status+'\n\nKeep holding while speaking. Release to answer.';
- return answer?fullPage(answer,offset).text:status+'\n\nTap to listen. Hold while speaking. Release to answer.\nSwipe down for the next page.';
+ return answer?answerPage(answer,offset).text:status+'\n\nTap to listen. Hold while speaking. Release to answer.\nSwipe down for the next page.';
 }
-function containers(){return [new TextContainerProperty({containerID:1,containerName:'answer',xPosition:4,yPosition:4,width:568,height:280,paddingLength:0,borderWidth:0,isEventCapture:1,content:lensContent()})];}
+function pageDefinition(){
+ const custom=reading.font!=='native';
+ return {containerTotalNum:custom?5:1,textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:4,yPosition:4,width:568,height:280,paddingLength:0,borderWidth:0,isEventCapture:1,content:custom?'':lensContent(),...(custom?{zOrderIndex:0}:{})})],...(custom?{imageObject:imageContainers()}:{})};
+}
 function render(){
- const f=fullPage(answer,offset);offset=f.page;
+ const f=answerPage(answer,offset);offset=f.page;
  el('status').textContent=status;el('page').textContent=`Page ${f.page+1} / ${f.count}`;el('display').textContent=lensContent();
+ el('reading-note').textContent=`${f.rows} lines fit per page · up to ${reading.words} words per line${reading.font==='native'?'':'. Custom font may update more slowly on glasses.'}`;
+ el('display').style.fontSize=reading.font==='native'?'':`${reading.font}px`;
  el('full-answer').textContent=answer;el('question').textContent=questionText?`Heard: ${questionText}`:'';
  el<HTMLButtonElement>('start').disabled=recorder.state==='busy';
  el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
  el<HTMLButtonElement>('up').disabled=offset===0;el<HTMLButtonElement>('down').disabled=offset>=f.count-1;
  el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';
- dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},80);
+ dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},reading.font==='native'?80:250);
 }
 async function paint(){
   if(painting||!bridge||!screenReady||!active)return;
@@ -49,10 +57,13 @@ async function paint(){
     // Coalesce updates: never build up a queue while BLE is slow or disconnected.
     while(dirty&&screenReady&&active){
       dirty=false;
+      if(layoutDirty){layoutDirty=false;const ok=await deadline(bridge.rebuildPageContainer(new RebuildPageContainer(pageDefinition())),6000);if(!ok)throw new Error('Display rebuild failed');bitmap.reset();lastPaintedAnswer=undefined;}
       const content=lensContent();
       if(content!==lastPaintedAnswer){
+        if(reading.font!=='native'){await bitmap.paint(bridge,content,reading.font);}else{
         const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:1,containerName:'answer',content,contentOffset:0,contentLength:0})),5000);
-        if(!ok)throw new Error('Display update failed');lastPaintedAnswer=content;
+        if(!ok)throw new Error('Display update failed');}
+        lastPaintedAnswer=content;
       }
 
     }
@@ -70,9 +81,9 @@ async function connect(){
     if(!bridge){bridge=await deadline(waitForEvenAppBridge(),8000,'Open through Even Hub to connect your glasses.');subscribe();
       if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode='press';}}catch{}
     }
-    if(created){try{const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({containerTotalNum:1,textObject:containers()})),6000);if(!ok)created=false;}catch{created=false;}}
-    if(!created) {const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer({containerTotalNum:1,textObject:containers()})),6000);if(result!==0)throw new Error(`Glasses page unavailable (${result})`);created=true;}
-    lastPaintedAnswer=undefined;screenReady=true;recoveryAttempts=0;el('connection').textContent='Glasses connected';el('hint').textContent='Tap, wait for Listening, then speak. Your last answer stays available after reconnecting.';render();
+    if(created){try{const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({...pageDefinition()})),6000);if(!ok)created=false;}catch{created=false;}}
+    if(!created) {const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer({...pageDefinition()})),6000);if(result!==0)throw new Error(`Glasses page unavailable (${result})`);created=true;}
+    bitmap.reset();layoutDirty=false;lastPaintedAnswer=undefined;screenReady=true;recoveryAttempts=0;el('connection').textContent='Glasses connected';el('hint').textContent='Tap, wait for Listening, then speak. Your last answer stays available after reconnecting.';render();
     if(token.value&&!apiReady)void checkConnection(false);
   }catch(error){screenReady=false;el('connection').textContent=recoveryAttempts>=5?'Open or resume Ring Ask in Even Hub':'Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
   finally{connecting=false;if(!screenReady)scheduleRecovery();}
@@ -92,7 +103,7 @@ function subscribe(){
     }else if(device.isConnected()){recoveryAttempts=0;if(active&&!screenReady)void connect();}
   });
 }
-function scroll(direction:number){offset+=direction;render();saveAnswer();const f=fullPage(answer,offset);el('hint').textContent=`Page ${f.page+1} of ${f.count}${f.count===1?' · this answer fits on one page':''}`;}
+function scroll(direction:number){offset+=direction;render();saveAnswer();const f=answerPage(answer,offset);el('hint').textContent=`Page ${f.page+1} of ${f.count}${f.count===1?' · this answer fits on one page':''}`;}
 function dispatch(type:number){
  const action=controlAction(type,active);
  if(action==='previous'||action==='next'){scroll(action==='previous'?-1:1);return;}
@@ -150,6 +161,7 @@ el('up').onclick=()=>scroll(-1);el('down').onclick=()=>scroll(1);
 el('retry').onclick=()=>{if(!retryAudio||recorder.state!=='ready')return;recorder.state='busy';status='Retrying…';render();void submit(retryAudio).catch(error=>status=error.message).finally(()=>{recorder.state='ready';render();});};
 el('reconnect').onclick=()=>{active=true;recoveryAttempts=0;void connect();void checkConnection(false);};
 el('exit').onclick=async()=>{active=false;abort?.abort();await recorder.dispatch(5);await bridge?.shutDownPageContainer(1);};
+for(const id of ['font','rows','words'])el<HTMLInputElement>(id).onchange=()=>{touched=true;reading=readingSettings(Object.fromEntries(['font','rows','words'].map(key=>[key,el<HTMLInputElement>(key).value])));offset=0;layoutDirty=true;render();void saveSettings();};
 el('save').onclick=()=>{touched=true;void checkConnection(true);};
 for(const input of [backend,token])input.oninput=()=>{touched=true;};
 el('demo').onclick=()=>{if(recorder.state!=='ready')return;status='Reading sample';answer="Right now, my work is focused on the QFC regulatory reporting platform at Mizuho. I work with Snowflake SQL and TIDAL to move source data through staging, work, and extract tables.\n\nA big part of my role is checking that the final extracts reconcile correctly before publication. That means tracing missing records, duplicate positions, and mapping issues back through the transformations rather than assuming a successful load means the data is correct.";offset=0;render();saveAnswer();};
