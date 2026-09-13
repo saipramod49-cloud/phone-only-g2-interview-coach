@@ -1,6 +1,6 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
 import {Recorder,gesture,controlAction} from './controller.mjs';
-import {fullPage,readingSettings,deadline} from './reader.mjs';
+import {fullPage,readingSettings,deadline,emphasisParts} from './reader.mjs';
 import './style.css';
 import {bitmapPage,imageContainers,BitmapDisplay} from './bitmap';
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
@@ -40,7 +40,7 @@ function pageDefinition(){
 }
 function render(){
  const f=answerPage(answer,offset);offset=f.page;
- el('status').textContent=status;el('page').textContent=`Page ${f.page+1} / ${f.count}`;el('display').textContent=lensContent();
+ el('status').textContent=status;el('page').textContent=`Page ${f.page+1} / ${f.count}`;el('display').replaceChildren();for(const part of emphasisParts(lensContent())){const node=document.createElement(part.bold?'strong':'span');node.textContent=part.text;el('display').append(node);}
  el('reading-note').textContent=`${f.rows} lines fit per page · ${reading.words==='auto'?'automatic full-width wrapping':`up to ${reading.words} words per line`}${reading.font==='native'?'':'. Custom font may update more slowly on glasses.'}`;
  el('display').style.fontSize=reading.font==='native'?'':`${reading.font}px`;
  el('full-answer').textContent=answer;el('question').textContent=questionText?`Heard: ${questionText}`:'';

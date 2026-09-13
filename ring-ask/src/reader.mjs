@@ -70,3 +70,5 @@ export function measuredPage(text,index,raw,measure){
  const count=Math.ceil(all.length/rows),page=Math.max(0,Math.min(count-1,index));
  return {text:all.slice(page*rows,page*rows+rows).map(line=>line===''?'---':line).join('\n'),page,count,rows};
 }
+
+export function emphasisParts(text){return text.split(/(\b[A-Z][A-Z0-9_-]+\b|\b\d+(?:\.\d+)?%)/g).filter(Boolean).map(text=>({text,bold:/^(?:[A-Z][A-Z0-9_-]+|\d+(?:\.\d+)?%)$/.test(text)}));}

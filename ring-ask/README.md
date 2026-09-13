@@ -7,3 +7,5 @@ Native mode uses Even's @evenrealities/pretext 0.1.4 font metrics rather than es
 Font options: Native or image-rendered 18/22/26/30px. Larger image fonts may fit fewer rows and update more slowly. Paragraph dividers are retained. This uses published G2 metrics; the private built-in Even AI UI configuration is not exposed by the saved agent settings.
 
 Validation: build, 25 tests, SDK container validation, and measured 10-line page fit. Physical glasses still require wearer verification.
+
+Version 0.4.3: answers now target 2–4 concise bullets and 35–65 words, with one emphasized key phrase per bullet. Uppercase phrases render bold in the phone and image-font views; native text preserves capitals because it has no bold API. Three real profile questions were evaluated in outputs/natural-answer-evaluation.json.

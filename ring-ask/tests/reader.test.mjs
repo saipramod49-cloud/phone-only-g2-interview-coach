@@ -95,3 +95,9 @@ test('native auto wrapping uses the official firmware metrics and fills each row
   if(i+1<all.length)assert.ok(measureTextWrap(all[i]+' '+all[i+1].split(' ')[0],568).lineCount>1);
  }
 });
+
+test('keyword emphasis preserves text and only marks uppercase phrases or metrics',async()=>{
+ const {emphasisParts}=await import('../src/reader.mjs');const text='- I used SNOWFLAKE SQL to check 12% of records.';const parts=emphasisParts(text);
+ assert.equal(parts.map(p=>p.text).join(''),text);
+ assert.deepEqual(parts.filter(p=>p.bold).map(p=>p.text),['SNOWFLAKE','SQL','12%']);
+});
