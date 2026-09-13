@@ -68,3 +68,8 @@ export class Recorder {
     this.chunks = []; this.bytes = 0; this.state = 'ready'; this.change('Ready');
   }
 }
+
+export function controlAction(type,active=true){
+ if(!active)return null;
+ return ({0:'listen',1:'previous',2:'next',3:'answer'})[type]??null;
+}

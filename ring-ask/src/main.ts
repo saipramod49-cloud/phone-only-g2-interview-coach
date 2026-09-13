@@ -1,5 +1,5 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
-import {Recorder,gesture} from './controller.mjs';
+import {Recorder,gesture,controlAction} from './controller.mjs';
 import {fullPage,deadline} from './reader.mjs';
 import './style.css';
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
@@ -19,7 +19,7 @@ const recorder=new Recorder(async(on:boolean)=>{
   try {return await deadline(bridge.audioControl(on,AudioInputSource.Glasses),6500,'Microphone connection timed out. Reconnecting…');}
   catch(error){screenReady=false;scheduleRecovery();throw error;}
 },(message:string|null)=>{if(message){status=message;if(message==='Listening'){lastAudioAt=Date.now();}}render();},submit);
-recorder.mode='hold';
+recorder.mode='tap';
 function saveAnswer(){try{localStorage.setItem('ring-ask-answer',JSON.stringify({answer,offset,question:questionText}));}catch{}}
 async function saveSettings(){
   const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim()});
@@ -28,15 +28,16 @@ async function saveSettings(){
   return saved;
 }
 function lensContent(){
- if(['starting','listening','stopping'].includes(recorder.state))return status+'\n\nHold while speaking. Release to answer.';
- return answer?fullPage(answer,offset).text:status+'\n\nTap to start. Hold to listen. Release to answer.\nSwipe down for the next page.';
+ if(['starting','listening','stopping'].includes(recorder.state))return status+'\n\nDouble-tap when the question is complete.';
+ return answer?fullPage(answer,offset).text:status+'\n\nTap to listen. Double-tap to answer.\nSwipe down for the next page.';
 }
 function containers(){return [new TextContainerProperty({containerID:1,containerName:'answer',xPosition:4,yPosition:4,width:568,height:280,paddingLength:0,borderWidth:0,isEventCapture:1,content:lensContent()})];}
 function render(){
  const f=fullPage(answer,offset);offset=f.page;
  el('status').textContent=status;el('page').textContent=`Page ${f.page+1} / ${f.count}`;el('display').textContent=lensContent();
  el('full-answer').textContent=answer;el('question').textContent=questionText?`Heard: ${questionText}`:'';
- el<HTMLButtonElement>('start').disabled=recorder.state==='busy';
+ el<HTMLButtonElement>('start').disabled=recorder.state!=='ready';
+ el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
  el<HTMLButtonElement>('up').disabled=offset===0;el<HTMLButtonElement>('down').disabled=offset>=f.count-1;
  el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';
  dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},80);
@@ -67,11 +68,11 @@ async function connect(){
   if(connecting||!active)return;connecting=true;
   try{
     if(!bridge){bridge=await deadline(waitForEvenAppBridge(),8000,'Open through Even Hub to connect your glasses.');subscribe();
-      if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode='hold';}}catch{}
+      if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode='tap';}}catch{}
     }
     if(created){try{const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({containerTotalNum:1,textObject:containers()})),6000);if(!ok)created=false;}catch{created=false;}}
     if(!created) {const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer({containerTotalNum:1,textObject:containers()})),6000);if(result!==0)throw new Error(`Glasses page unavailable (${result})`);created=true;}
-    lastPaintedAnswer=undefined;screenReady=true;recoveryAttempts=0;el('connection').textContent='Glasses connected';el('hint').textContent='Hold, wait for Listening, then speak. Your last answer stays available after reconnecting.';render();
+    lastPaintedAnswer=undefined;screenReady=true;recoveryAttempts=0;el('connection').textContent='Glasses connected';el('hint').textContent='Tap, wait for Listening, then speak. Your last answer stays available after reconnecting.';render();
     if(token.value&&!apiReady)void checkConnection(false);
   }catch(error){screenReady=false;el('connection').textContent=recoveryAttempts>=5?'Open or resume Ring Ask in Even Hub':'Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
   finally{connecting=false;if(!screenReady)scheduleRecovery();}
@@ -80,7 +81,7 @@ function subscribe(){
   bridge!.onEvenHubEvent(event=>{
     if(event.audioEvent){lastAudioAt=Date.now();recorder.audio(event.audioEvent.audioPcm);}
     const type=gesture(event);if(type===null)return;
-    if(type===4){active=true;recoveryAttempts=0;void connect();return;}
+    if(type===4){active=true;recoveryAttempts=0;if(!screenReady)void connect();return;}
     if([5,6,7].includes(type)){active=false;screenReady=false;abort?.abort();void recorder.dispatch(5);saveAnswer();return;}
     if([0,1,2,3,9,10].includes(type))el('input-status').textContent=`Input ${++inputCount}: ${['tap','up','down','double tap'][type]||(type===9?'hold':'release')}`;
     dispatch(type);
@@ -91,17 +92,16 @@ function subscribe(){
     }else if(device.isConnected()){recoveryAttempts=0;if(active&&!screenReady)void connect();}
   });
 }
-function scroll(direction:number){offset+=direction;render();saveAnswer();}
+function scroll(direction:number){offset+=direction;render();saveAnswer();const f=fullPage(answer,offset);el('hint').textContent=`Page ${f.page+1} of ${f.count}${f.count===1?' · this answer fits on one page':''}`;}
 function dispatch(type:number){
- if(type===1||type===2){scroll(type===1?-1:1);return;}
- if(type===0&&recorder.state==='ready'){
-  active=true;recoveryAttempts=0;if(!screenReady)void connect();status='Ready · hold to speak';render();return;
- }
- if(type===9&&recorder.state==='ready'){
+ const action=controlAction(type,active);
+ if(action==='previous'||action==='next'){scroll(action==='previous'?-1:1);return;}
+ if(action==='listen'){
+  if(recorder.state!=='ready')return;
   if(!token.value.trim()){status='Set up connection on phone';el('health').textContent='Enter your bridge token and save.';render();return;}
-  retryAudio=undefined;
- }
- if([9,10,5,6,7].includes(type))void recorder.dispatch(type);
+  if(!screenReady){recoveryAttempts=0;void connect();status='Reconnecting · tap again when connected';render();return;}
+  retryAudio=undefined;void recorder.dispatch(0);
+ }else if(action==='answer'&&['starting','listening'].includes(recorder.state))void recorder.dispatch(3);
 }
 async function submit(pcm:Uint8Array){
   retryAudio=pcm;abort?.abort();const current=new AbortController();abort=current;
@@ -139,12 +139,8 @@ async function checkConnection(save:boolean){
   }catch(error){apiReady=false;el('health').textContent=controller.signal.aborted?'Connection timed out. Will recheck when you reconnect.':(error as Error).message;}
   finally{clearTimeout(timer);checking=false;el<HTMLButtonElement>('save').disabled=false;el('save').textContent='Save & check connection';}
 }
-const holdButton=el<HTMLButtonElement>('start');
-holdButton.onpointerdown=event=>{holdButton.setPointerCapture(event.pointerId);dispatch(9);};
-holdButton.onpointerup=()=>dispatch(10);
-holdButton.onpointercancel=()=>{void recorder.dispatch(5);};
-holdButton.onkeydown=event=>{if((event.key===' '||event.key==='Enter')&&!event.repeat){event.preventDefault();dispatch(9);}};
-holdButton.onkeyup=event=>{if(event.key===' '||event.key==='Enter'){event.preventDefault();dispatch(10);}};
+el('start').onclick=()=>dispatch(0);
+el('stop').onclick=()=>dispatch(3);
 el('cancel').onclick=()=>{abort?.abort();void recorder.dispatch(5);};
 el('up').onclick=()=>scroll(-1);el('down').onclick=()=>scroll(1);
 el('retry').onclick=()=>{if(!retryAudio||recorder.state!=='ready')return;recorder.state='busy';status='Retrying…';render();void submit(retryAudio).catch(error=>status=error.message).finally(()=>{recorder.state='ready';render();});};
@@ -157,5 +153,5 @@ function resume(){active=true;recoveryAttempts=0;if(!screenReady)void connect();
 window.addEventListener('online',resume);window.addEventListener('pageshow',resume);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();else saveAnswer();});
 window.addEventListener('pagehide',()=>{abort?.abort();void recorder.dispatch(5);saveAnswer();});
-setInterval(()=>{if(recorder.state==='listening'&&Date.now()-lastAudioAt>6500){screenReady=false;void recorder.dispatch(5).then(()=>{status='Microphone dropped · hold to record again';render();});el('hint').textContent='No microphone audio received. Restoring the glasses connection.';recoveryAttempts=0;scheduleRecovery();}},2000);
+setInterval(()=>{if(recorder.state==='listening'&&Date.now()-lastAudioAt>6500){screenReady=false;void recorder.dispatch(5).then(()=>{status='Microphone dropped · tap to record again';render();});el('hint').textContent='No microphone audio received. Restoring the glasses connection.';recoveryAttempts=0;scheduleRecovery();}},2000);
 render();void connect();if(token.value)void checkConnection(false);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Recorder,gesture,pages,MAX_BYTES} from '../src/controller.mjs';
+import {Recorder,gesture,pages,MAX_BYTES,controlAction} from '../src/controller.mjs';
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function setup(mic=async()=>true,submit=async()=>{}) {const messages=[];return {recorder:new Recorder(mic,x=>messages.push(x),submit),messages};}
 test('tap → audio → double tap submits once and ignores idle audio',async()=>{
@@ -34,4 +34,16 @@ test('SDK zero normalization is only a tap for an input envelope',()=>{
 });
 test('pagination keeps long answers readable and splits oversized words',()=>{
   const result=pages('A '.repeat(500)+'B'.repeat(100));assert.ok(result.length>1);for(const page of result)for(const line of page.split('\n'))assert.ok(line.length<=40);
+});
+
+test('simple ring routing uses taps and swipes, never holds or background input',()=>{
+ assert.equal(controlAction(0),'listen');assert.equal(controlAction(3),'answer');
+ assert.equal(controlAction(1),'previous');assert.equal(controlAction(2),'next');
+ for(const type of [4,5,6,7,9,10,null,undefined])assert.equal(controlAction(type),null);
+ for(const type of [0,1,2,3,9,10])assert.equal(controlAction(type,false),null);
+});
+test('hold and release cannot open the microphone in restored tap mode',async()=>{
+ const calls=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;});
+ await r.dispatch(9);await r.dispatch(10);assert.deepEqual(calls,[]);
+ await r.dispatch(0);r.audio(new Uint8Array(6400));await r.dispatch(3);await tick();assert.deepEqual(calls,[true,false]);
 });
