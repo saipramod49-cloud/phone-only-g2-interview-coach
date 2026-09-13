@@ -57,7 +57,7 @@ test('full-screen pages retain the complete answer through the last page',async(
  const count=fullPage(text).count;
  const restored=Array.from({length:count},(_,i)=>fullPage(text,i).text).join(' ').replace(/\s+/g,' ');
  assert.equal(restored,text);assert.equal(fullPage(text,999).page,count-1);
- assert.ok(Array.from({length:count},(_,i)=>fullPage(text,i).text.split('\n').length).every(n=>n<=9));
+ assert.ok(Array.from({length:count},(_,i)=>fullPage(text,i).text.split('\n').length).every(n=>n<=10));
 });
 
 test('new reading settings cap lines and words at ten',async()=>{
@@ -79,4 +79,19 @@ test('paragraph gaps become one divider row in each renderer',async()=>{
  const {fullPage,measuredPage}=await import('../src/reader.mjs');
  assert.equal(fullPage('First paragraph.\n\nSecond paragraph.',0,{rows:10}).text,'First paragraph.\n----------------------------------------\nSecond paragraph.');
  assert.equal(measuredPage('First paragraph.\n\nSecond paragraph.',0,{rows:10,font:'22'},x=>x.length*10).text,'First paragraph.\n---\nSecond paragraph.');
+});
+
+test('native auto wrapping uses the official firmware metrics and fills each row',async()=>{
+ const {getTextWidth,measureTextWrap}=await import('@evenrealities/pretext');
+ const {fullPage}=await import('../src/reader.mjs');
+ const text='I work on QFC reporting at Mizuho using Snowflake SQL and TIDAL to validate source data before publishing the daily extracts. '.repeat(10).trim();
+ const first=fullPage(text,0,{rows:10,words:'auto'});
+ assert.equal(first.rows,10);
+ const all=Array.from({length:first.count},(_,i)=>fullPage(text,i,{rows:10,words:'auto'}).text).join('\n').split('\n');
+ assert.equal(all.join(' '),text);
+ for(let i=0;i<all.length;i++){
+  assert.ok(getTextWidth(all[i])<=568);
+  assert.equal(measureTextWrap(all[i],568).lineCount,1);
+  if(i+1<all.length)assert.ok(measureTextWrap(all[i]+' '+all[i+1].split(' ')[0],568).lineCount>1);
+ }
 });

@@ -12,7 +12,7 @@ let abort:AbortController|undefined,retryAudio:Uint8Array|undefined;
 let recovering:ReturnType<typeof setTimeout>|undefined,paintTimer:ReturnType<typeof setTimeout>|undefined,painting=false,dirty=false;
 let lastAudioAt=0,lastPaintedAnswer:string|undefined;
 let inputCount=0,touched=false,apiReady=false,checking=false,questionText='',questionStart=0,firstText=0;
-function restore(raw:any) {backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);for(const id of ['font','rows','words'] as const)el<HTMLInputElement>(id).value=String(reading[id]);}
+function restore(raw:any) {backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);if(raw.nativeLayoutVersion!==2&&reading.font==='native')reading=readingSettings({...reading,rows:10,words:'auto'});for(const id of ['font','rows','words'] as const)el<HTMLInputElement>(id).value=String(reading[id]);}
 try {restore(JSON.parse(localStorage.getItem('ring-ask-settings')||'{}'));const old=JSON.parse(localStorage.getItem('ring-ask-answer')||'{}');if(old.answer){answer=old.answer;offset=0;status='Saved answer';questionText=old.question||'';}}
 catch{restore({});}
 const recorder=new Recorder(async(on:boolean)=>{
@@ -24,7 +24,7 @@ const recorder=new Recorder(async(on:boolean)=>{
 recorder.mode='press';
 function saveAnswer(){try{localStorage.setItem('ring-ask-answer',JSON.stringify({answer,offset,question:questionText}));}catch{}}
 async function saveSettings(){
-  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading});
+  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading,nativeLayoutVersion:2});
   let saved=false;try{localStorage.setItem('ring-ask-settings',raw);saved=true;}catch{}
   if(bridge)try{await deadline(bridge.setLocalStorage('ring-ask-settings',raw),2500);saved=true;}catch{}
   return saved;
@@ -36,12 +36,12 @@ function lensContent(){
 }
 function pageDefinition(){
  const custom=reading.font!=='native';
- return {containerTotalNum:custom?5:1,textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:4,yPosition:4,width:568,height:280,paddingLength:0,borderWidth:1,borderColor:15,isEventCapture:1,content:custom?'':lensContent(),...(custom?{zOrderIndex:0}:{})})],...(custom?{imageObject:imageContainers()}:{})};
+ return {containerTotalNum:custom?5:1,textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:custom?4:0,yPosition:custom?4:0,width:custom?568:576,height:custom?280:288,paddingLength:custom?0:3,borderWidth:1,borderColor:15,isEventCapture:1,content:custom?'':lensContent(),...(custom?{zOrderIndex:0}:{})})],...(custom?{imageObject:imageContainers()}:{})};
 }
 function render(){
  const f=answerPage(answer,offset);offset=f.page;
  el('status').textContent=status;el('page').textContent=`Page ${f.page+1} / ${f.count}`;el('display').textContent=lensContent();
- el('reading-note').textContent=`${f.rows} lines fit per page · up to ${reading.words} words per line${reading.font==='native'?'':'. Custom font may update more slowly on glasses.'}`;
+ el('reading-note').textContent=`${f.rows} lines fit per page · ${reading.words==='auto'?'automatic full-width wrapping':`up to ${reading.words} words per line`}${reading.font==='native'?'':'. Custom font may update more slowly on glasses.'}`;
  el('display').style.fontSize=reading.font==='native'?'':`${reading.font}px`;
  el('full-answer').textContent=answer;el('question').textContent=questionText?`Heard: ${questionText}`:'';
  el<HTMLButtonElement>('start').disabled=recorder.state==='busy';

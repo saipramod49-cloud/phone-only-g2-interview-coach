@@ -1,3 +1,4 @@
+import {getTextWidth,measureTextWrap} from '@evenrealities/pretext';
 export const defaults = {rows:4,words:7,width:440,x:50,y:50,step:1,wpm:120,style:'natural',navigation:'line',emphasis:'on'};
 const clamp=(n,lo,hi,fallback)=>Number.isFinite(Number(n))?Math.max(lo,Math.min(hi,Math.round(Number(n)))):fallback;
 export function settings(raw={}) {
@@ -11,24 +12,15 @@ export function layout(raw) {
   const width=s.width,x=Math.round((576-width)*s.x/100);
   return {width,height,x,y:Math.round((288-height)*s.y/100)};
 }
-// Approximate the proportional firmware font rather than charging every glyph 14px.
-// Leave extra room for firmware differences; uppercase emphasis is measured too.
-export function textWidth(text) {
-  return Array.from(text).reduce((sum,char)=>sum+(
-    /[ilI1.,'`:;!|]/.test(char)?5:
-    /\s/.test(char)?6:
-    /[mwMW@%]/.test(char)?19:
-    /[A-Z0-9]/.test(char)?13:
-    /[a-z]/.test(char)?11:20),0);
-}
+export const textWidth=getTextWidth;
 export function lines(text,raw) {
-  const s=settings(raw),budget=layout(s).width-24,out=[];
-  const fits=value=>textWidth(emphasize(value,s))<=budget;
+  const s=settings(raw),budget=raw.contentWidth??(layout(s).width-24),out=[];
+  const fits=value=>measureTextWrap(emphasize(value,s),budget).lineCount<=1;
   for(const paragraph of text.replace(/\r/g,'').split('\n')) {
     if(!paragraph.trim()) {if(out.length && out.at(-1)!=='')out.push('');continue;}
     let line='',count=0;
     for(const word of paragraph.trim().split(/\s+/)) {
-      if(line && (count>=s.words || !fits(line+' '+word))){out.push(line);line='';count=0;}
+      if(line && (count>=(raw.words==='auto'?Infinity:s.words) || !fits(line+' '+word))){out.push(line);line='';count=0;}
       let fragment='';
       for(const char of word){
         if(fragment&&!fits(fragment+char)){out.push(fragment);fragment='';}
@@ -54,11 +46,11 @@ export const keywordPattern=/\b(?:Snowflake|TIDAL|BigQuery|SQL|Python|PySpark|Ka
 export function emphasize(text,raw){return settings(raw).emphasis==='off'?text:text.replace(keywordPattern,word=>word.toUpperCase());}
 
 export function readingSettings(raw={}){
- return {rows:clamp(raw.rows,1,10,9),words:clamp(raw.words,1,10,10),font:['native','18','22','26','30'].includes(String(raw.font))?String(raw.font):'native'};
+ return {rows:clamp(raw.rows,1,10,10),words:raw.words==='auto'?'auto':clamp(raw.words,1,10,10),font:['native','18','22','26','30'].includes(String(raw.font))?String(raw.font):'native'};
 }
 export function fullPage(text,index=0,raw={}){
  const pref=readingSettings(raw);
- const all=lines(text,{width:564,words:pref.words,emphasis:'off'}),count=Math.max(1,Math.ceil(all.length/pref.rows));
+ const all=lines(text,{width:564,contentWidth:568,words:pref.words,emphasis:'off'}),count=Math.max(1,Math.ceil(all.length/pref.rows));
  const page=Math.max(0,Math.min(count-1,index));
  return {text:all.slice(page*pref.rows,page*pref.rows+pref.rows).map(line=>line===''?'----------------------------------------':line).join('\n'),page,count,rows:pref.rows};
 }
@@ -68,7 +60,7 @@ export function measuredPage(text,index,raw,measure){
   if(!paragraph.trim()){if(all.length&&all.at(-1)!=='')all.push('');continue;}
   let line='',words=0;
   for(const word of paragraph.trim().split(/\s+/)){
-   if(line&&(words>=pref.words||measure(line+' '+word)>560)){all.push(line);line='';words=0;}
+   if(line&&(words>=(pref.words==='auto'?Infinity:pref.words)||measure(line+' '+word)>560)){all.push(line);line='';words=0;}
    let part='';for(const char of word){if(part&&measure(part+char)>560){all.push(part);part='';}part+=char;}
    line+=(line?' ':'')+part;words++;
   }

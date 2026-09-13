@@ -1,9 +1,9 @@
-# Ring Ask v0.4.1
+# Ring Ask v0.4.2
 
-Tap starts listening. Hold continues the same recording; release stops and submits. Hold alone also starts. Double-tap is ignored. Swipe down/up for next/previous answer pages.
+Tap starts listening; hold continues; release submits. Swipe between answer pages. Controls are unchanged from v0.3.2.
 
-Reading settings: Native font (default, fastest) or image-rendered 18/22/26/30px; 1–10 maximum visible lines; 1–10 maximum words per line. Larger fonts fit fewer lines and words. Numbered sizes use four PNG tiles and may update more slowly over Bluetooth. Select Native to return to the original text renderer. Settings save automatically. Native width/position stays full-screen.
+Native mode uses Even's @evenrealities/pretext 0.1.4 font metrics rather than estimated character widths. Its full 576×288 canvas has a 1px green border and 3px padding: inner text area 568×280. Ten native lines occupy 270px. Existing native settings migrate once to 10 lines and Auto words to fill available width. Optional 1–10 word limits remain; these intentionally shorten lines.
 
-Build, 23 tests, and SDK five-container validation pass. Custom image fonts require physical glasses testing. Ring routing remains the same as v0.3.2.
+Font options: Native or image-rendered 18/22/26/30px. Larger image fonts may fit fewer rows and update more slowly. Paragraph dividers are retained. This uses published G2 metrics; the private built-in Even AI UI configuration is not exposed by the saved agent settings.
 
-Thin green border around the answer area. Paragraph gaps become divider rows (dashed in native text; solid in image fonts). Dividers count toward the selected visible-line limit.
+Validation: build, 25 tests, SDK container validation, and measured 10-line page fit. Physical glasses still require wearer verification.
