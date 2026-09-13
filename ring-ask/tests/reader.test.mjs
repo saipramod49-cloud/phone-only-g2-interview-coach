@@ -74,3 +74,9 @@ test('new reading settings cap lines and words at ten',async()=>{
  const reconstructed=Array.from({length:n},(_,i)=>measuredPage(text,i,{rows:10,words:10,font:'30'},x=>x.length*16).text).join(' ').replace(/\s+/g,' ');
  assert.equal(reconstructed,text);
 });
+
+test('paragraph gaps become one divider row in each renderer',async()=>{
+ const {fullPage,measuredPage}=await import('../src/reader.mjs');
+ assert.equal(fullPage('First paragraph.\n\nSecond paragraph.',0,{rows:10}).text,'First paragraph.\n----------------------------------------\nSecond paragraph.');
+ assert.equal(measuredPage('First paragraph.\n\nSecond paragraph.',0,{rows:10,font:'22'},x=>x.length*10).text,'First paragraph.\n---\nSecond paragraph.');
+});

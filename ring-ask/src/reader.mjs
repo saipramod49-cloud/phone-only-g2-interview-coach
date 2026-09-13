@@ -60,7 +60,7 @@ export function fullPage(text,index=0,raw={}){
  const pref=readingSettings(raw);
  const all=lines(text,{width:564,words:pref.words,emphasis:'off'}),count=Math.max(1,Math.ceil(all.length/pref.rows));
  const page=Math.max(0,Math.min(count-1,index));
- return {text:all.slice(page*pref.rows,page*pref.rows+pref.rows).join('\n'),page,count,rows:pref.rows};
+ return {text:all.slice(page*pref.rows,page*pref.rows+pref.rows).map(line=>line===''?'----------------------------------------':line).join('\n'),page,count,rows:pref.rows};
 }
 export function measuredPage(text,index,raw,measure){
  const pref=readingSettings(raw),size=Number(pref.font),rows=Math.min(pref.rows,Math.floor(280/(size+4))),all=[];
@@ -76,5 +76,5 @@ export function measuredPage(text,index,raw,measure){
  }
  if(!all.length)all.push('');
  const count=Math.ceil(all.length/rows),page=Math.max(0,Math.min(count-1,index));
- return {text:all.slice(page*rows,page*rows+rows).join('\n'),page,count,rows};
+ return {text:all.slice(page*rows,page*rows+rows).map(line=>line===''?'---':line).join('\n'),page,count,rows};
 }

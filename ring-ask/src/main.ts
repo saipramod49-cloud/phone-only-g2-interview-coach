@@ -36,7 +36,7 @@ function lensContent(){
 }
 function pageDefinition(){
  const custom=reading.font!=='native';
- return {containerTotalNum:custom?5:1,textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:4,yPosition:4,width:568,height:280,paddingLength:0,borderWidth:0,isEventCapture:1,content:custom?'':lensContent(),...(custom?{zOrderIndex:0}:{})})],...(custom?{imageObject:imageContainers()}:{})};
+ return {containerTotalNum:custom?5:1,textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:4,yPosition:4,width:568,height:280,paddingLength:0,borderWidth:1,borderColor:15,isEventCapture:1,content:custom?'':lensContent(),...(custom?{zOrderIndex:0}:{})})],...(custom?{imageObject:imageContainers()}:{})};
 }
 function render(){
  const f=answerPage(answer,offset);offset=f.page;
