@@ -71,3 +71,5 @@ Commit 2e60a93 is live on the existing Render service. A synthetic spoken curren
 Version 0.2.2: horizontal position now moves the left edge up to 284px and narrows the remaining text area. Navigation offers full pages or line scrolling. Keyword emphasis uses phone highlights and capital letters on glasses. Unchanged glasses text/status updates are skipped; stream coalescing reduced to 80ms. Natural responses use spoken examples and aim for 60–100 words. Hardware latency still needs wearer testing.
 
 Version 0.2.2 supersedes the shrinking-width behavior: width now stays fixed at every horizontal position (default 440px centred). Old display settings migrate once. Use Reset to centred reading and Show numbered lens test to diagnose clipping; compare Complete answer on phone. A full-width block has little room to move on the 576px canvas. Lens clipping has not been verified on hardware.
+
+Version 0.2.3: replace the uniform 14px character estimate with a proportional glyph estimate, including uppercase keyword emphasis. The numbered calibration sentence now fits at 360px. This is still an estimate; verify on the physical glasses.

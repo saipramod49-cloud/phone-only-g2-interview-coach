@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {settings,layout,lines,frame,deadline} from '../src/reader.mjs';
+import {settings,layout,lines,frame,deadline,textWidth,emphasize} from '../src/reader.mjs';
 test('reader obeys chosen line and word limits without losing text',()=>{
  const text='A useful answer explains the actual mechanism and gives a grounded example from the project. '.repeat(12).trim();
  const s=settings({rows:3,words:4,width:540});const all=lines(text,s);
@@ -38,4 +38,15 @@ test('complete pages do not repeat the previous page at the end',()=>{
  const pages=[0,3,6].map(offset=>frame(text,offset,s));
  assert.equal(pages.map(p=>p.text).join('\n'),lines(text,s).join('\n'));
  assert.equal(pages[2].text,'seven');assert.equal(frame(text,999,s).start,6);
+});
+
+test('numbered lens test stays on one line at minimum width',()=>{
+ const text=Array.from({length:16},(_,i)=>`${i+1}. Read this complete line.`).join('\n');
+ for(const x of [0,50,100])assert.equal(lines(text,{width:360,words:12,x}).length,16);
+});
+test('wide glyphs and capitalized keywords are counted before wrapping',()=>{
+ const s=settings({width:360,words:12}),text='WWWWWWWWWWWWWWWWWWWWWWWW Snowflake reconciliation SQL BigQuery';
+ assert.ok(textWidth('WWWW')>textWidth('iiii'));
+ assert.ok(lines(text,s).every(line=>textWidth(emphasize(line,s))<=336));
+ assert.equal(lines(text,s).join('').replace(/ /g,''),text.replace(/ /g,''));
 });

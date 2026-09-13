@@ -11,15 +11,30 @@ export function layout(raw) {
   const width=s.width,x=Math.round((576-width)*s.x/100);
   return {width,height,x,y:Math.round((288-height)*s.y/100)};
 }
+// Approximate the proportional firmware font rather than charging every glyph 14px.
+// Leave extra room for firmware differences; uppercase emphasis is measured too.
+export function textWidth(text) {
+  return Array.from(text).reduce((sum,char)=>sum+(
+    /[ilI1.,'`:;!|]/.test(char)?5:
+    /\s/.test(char)?6:
+    /[mwMW@%]/.test(char)?19:
+    /[A-Z0-9]/.test(char)?13:
+    /[a-z]/.test(char)?11:20),0);
+}
 export function lines(text,raw) {
-  const s=settings(raw),columns=Math.max(12,Math.floor((layout(s).width-12)/14)),out=[];
+  const s=settings(raw),budget=layout(s).width-24,out=[];
+  const fits=value=>textWidth(emphasize(value,s))<=budget;
   for(const paragraph of text.replace(/\r/g,'').split('\n')) {
     if(!paragraph.trim()) {if(out.length && out.at(-1)!=='')out.push('');continue;}
     let line='',count=0;
-    for(let word of paragraph.trim().split(/\s+/)) {
-      if(line && (count>=s.words || line.length+word.length+1>columns)){out.push(line);line='';count=0;}
-      while(word.length>columns){out.push(word.slice(0,columns));word=word.slice(columns);}
-      if(word){line+=(line?' ':'')+word;count++;}
+    for(const word of paragraph.trim().split(/\s+/)) {
+      if(line && (count>=s.words || !fits(line+' '+word))){out.push(line);line='';count=0;}
+      let fragment='';
+      for(const char of word){
+        if(fragment&&!fits(fragment+char)){out.push(fragment);fragment='';}
+        fragment+=char;
+      }
+      if(fragment){line+=(line?' ':'')+fragment;count++;}
     }
     if(line)out.push(line);
   }
