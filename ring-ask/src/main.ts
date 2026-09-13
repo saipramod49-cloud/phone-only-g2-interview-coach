@@ -19,7 +19,7 @@ const recorder=new Recorder(async(on:boolean)=>{
   try {return await deadline(bridge.audioControl(on,AudioInputSource.Glasses),6500,'Microphone connection timed out. Reconnecting…');}
   catch(error){screenReady=false;scheduleRecovery();throw error;}
 },(message:string|null)=>{if(message){status=message;if(message==='Listening'){lastAudioAt=Date.now();}}render();},submit);
-recorder.mode='tap';
+recorder.mode='press';
 function saveAnswer(){try{localStorage.setItem('ring-ask-answer',JSON.stringify({answer,offset,question:questionText}));}catch{}}
 async function saveSettings(){
   const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim()});
@@ -28,15 +28,15 @@ async function saveSettings(){
   return saved;
 }
 function lensContent(){
- if(['starting','listening','stopping'].includes(recorder.state))return status+'\n\nDouble-tap when the question is complete.';
- return answer?fullPage(answer,offset).text:status+'\n\nTap to listen. Double-tap to answer.\nSwipe down for the next page.';
+ if(['starting','listening','stopping'].includes(recorder.state))return status+'\n\nKeep holding while speaking. Release to answer.';
+ return answer?fullPage(answer,offset).text:status+'\n\nTap to listen. Hold while speaking. Release to answer.\nSwipe down for the next page.';
 }
 function containers(){return [new TextContainerProperty({containerID:1,containerName:'answer',xPosition:4,yPosition:4,width:568,height:280,paddingLength:0,borderWidth:0,isEventCapture:1,content:lensContent()})];}
 function render(){
  const f=fullPage(answer,offset);offset=f.page;
  el('status').textContent=status;el('page').textContent=`Page ${f.page+1} / ${f.count}`;el('display').textContent=lensContent();
  el('full-answer').textContent=answer;el('question').textContent=questionText?`Heard: ${questionText}`:'';
- el<HTMLButtonElement>('start').disabled=recorder.state!=='ready';
+ el<HTMLButtonElement>('start').disabled=recorder.state==='busy';
  el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
  el<HTMLButtonElement>('up').disabled=offset===0;el<HTMLButtonElement>('down').disabled=offset>=f.count-1;
  el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';
@@ -68,7 +68,7 @@ async function connect(){
   if(connecting||!active)return;connecting=true;
   try{
     if(!bridge){bridge=await deadline(waitForEvenAppBridge(),8000,'Open through Even Hub to connect your glasses.');subscribe();
-      if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode='tap';}}catch{}
+      if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode='press';}}catch{}
     }
     if(created){try{const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({containerTotalNum:1,textObject:containers()})),6000);if(!ok)created=false;}catch{created=false;}}
     if(!created) {const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer({containerTotalNum:1,textObject:containers()})),6000);if(result!==0)throw new Error(`Glasses page unavailable (${result})`);created=true;}
@@ -100,8 +100,8 @@ function dispatch(type:number){
   if(recorder.state!=='ready')return;
   if(!token.value.trim()){status='Set up connection on phone';el('health').textContent='Enter your bridge token and save.';render();return;}
   if(!screenReady){recoveryAttempts=0;void connect();status='Reconnecting · tap again when connected';render();return;}
-  retryAudio=undefined;void recorder.dispatch(0);
- }else if(action==='answer'&&['starting','listening'].includes(recorder.state))void recorder.dispatch(3);
+  retryAudio=undefined;void recorder.dispatch(type);
+ }else if(action==='answer'&&['starting','listening'].includes(recorder.state))void recorder.dispatch(10);
 }
 async function submit(pcm:Uint8Array){
   retryAudio=pcm;abort?.abort();const current=new AbortController();abort=current;
@@ -139,8 +139,12 @@ async function checkConnection(save:boolean){
   }catch(error){apiReady=false;el('health').textContent=controller.signal.aborted?'Connection timed out. Will recheck when you reconnect.':(error as Error).message;}
   finally{clearTimeout(timer);checking=false;el<HTMLButtonElement>('save').disabled=false;el('save').textContent='Save & check connection';}
 }
-el('start').onclick=()=>dispatch(0);
-el('stop').onclick=()=>dispatch(3);
+el('start').onpointerdown=event=>{el('start').setPointerCapture(event.pointerId);dispatch(0);};
+el('start').onpointerup=()=>dispatch(10);
+el('start').onpointercancel=()=>{void recorder.dispatch(5);};
+el('start').onkeydown=event=>{if([' ','Enter'].includes(event.key)&&!event.repeat){event.preventDefault();dispatch(0);}};
+el('start').onkeyup=event=>{if([' ','Enter'].includes(event.key)){event.preventDefault();dispatch(10);}};
+el('stop').onclick=()=>dispatch(10);
 el('cancel').onclick=()=>{abort?.abort();void recorder.dispatch(5);};
 el('up').onclick=()=>scroll(-1);el('down').onclick=()=>scroll(1);
 el('retry').onclick=()=>{if(!retryAudio||recorder.state!=='ready')return;recorder.state='busy';status='Retrying…';render();void submit(retryAudio).catch(error=>status=error.message).finally(()=>{recorder.state='ready';render();});};

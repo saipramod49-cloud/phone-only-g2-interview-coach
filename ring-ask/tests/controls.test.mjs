@@ -36,14 +36,25 @@ test('pagination keeps long answers readable and splits oversized words',()=>{
   const result=pages('A '.repeat(500)+'B'.repeat(100));assert.ok(result.length>1);for(const page of result)for(const line of page.split('\n'))assert.ok(line.length<=40);
 });
 
-test('simple ring routing uses taps and swipes, never holds or background input',()=>{
- assert.equal(controlAction(0),'listen');assert.equal(controlAction(3),'answer');
+test('ring routing supports tap, hold, release and swipes',()=>{
+ assert.equal(controlAction(0),'listen');assert.equal(controlAction(10),'answer');
  assert.equal(controlAction(1),'previous');assert.equal(controlAction(2),'next');
- for(const type of [4,5,6,7,9,10,null,undefined])assert.equal(controlAction(type),null);
+ for(const type of [3,4,5,6,7,null,undefined])assert.equal(controlAction(type),null);
  for(const type of [0,1,2,3,9,10])assert.equal(controlAction(type,false),null);
 });
 test('hold and release cannot open the microphone in restored tap mode',async()=>{
  const calls=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;});
  await r.dispatch(9);await r.dispatch(10);assert.deepEqual(calls,[]);
  await r.dispatch(0);r.audio(new Uint8Array(6400));await r.dispatch(3);await tick();assert.deepEqual(calls,[true,false]);
+});
+
+test('tap then hold keeps one recording and release submits once',async()=>{
+ const calls=[],audio=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;},async pcm=>audio.push(pcm));r.mode='press';
+ await r.dispatch(0);r.audio(new Uint8Array(6400));await r.dispatch(9);assert.equal(r.state,'listening');
+ await r.dispatch(10);await tick();assert.deepEqual(calls,[true,false]);assert.equal(audio.length,1);
+ await r.dispatch(10);assert.equal(audio.length,1);
+});
+test('hold alone also starts and release stops in press mode',async()=>{
+ const calls=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;});r.mode='press';
+ await r.dispatch(9);r.audio(new Uint8Array(6400));await r.dispatch(10);await tick();assert.deepEqual(calls,[true,false]);
 });

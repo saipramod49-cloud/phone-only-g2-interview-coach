@@ -27,9 +27,9 @@ export class Recorder {
   dispatch(type) {
     this.queue = this.queue.then(async () => {
       if ([5,6,7].includes(type)) return this.cancel();
-      if ((type === 0 && this.mode === 'tap') || (type === 9 && this.mode === 'hold')) {
+      if ((type === 0 && ['tap','press'].includes(this.mode)) || (type === 9 && ['hold','press'].includes(this.mode))) {
         if (this.state !== 'ready') return;
-        this.held = type === 9;
+        this.held = type === 9 || this.mode === 'press';
         this.chunks = []; this.bytes = 0; this.state = 'starting'; this.change('Starting microphone…');
         try {
           if (!await this.mic(true)) throw new Error('Microphone unavailable. Check G2 connection and permission.');
@@ -71,5 +71,5 @@ export class Recorder {
 
 export function controlAction(type,active=true){
  if(!active)return null;
- return ({0:'listen',1:'previous',2:'next',3:'answer'})[type]??null;
+ return ({0:'listen',1:'previous',2:'next',9:'listen',10:'answer'})[type]??null;
 }
