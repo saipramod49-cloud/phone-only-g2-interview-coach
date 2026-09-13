@@ -50,3 +50,12 @@ test('wide glyphs and capitalized keywords are counted before wrapping',()=>{
  assert.ok(lines(text,s).every(line=>textWidth(emphasize(line,s))<=336));
  assert.equal(lines(text,s).join('').replace(/ /g,''),text.replace(/ /g,''));
 });
+
+test('full-screen pages retain the complete answer through the last page',async()=>{
+ const {fullPage}=await import('../src/reader.mjs');
+ const text='This answer explains a concrete engineering decision and its result. '.repeat(50).trim();
+ const count=fullPage(text).count;
+ const restored=Array.from({length:count},(_,i)=>fullPage(text,i).text).join(' ').replace(/\s+/g,' ');
+ assert.equal(restored,text);assert.equal(fullPage(text,999).page,count-1);
+ assert.ok(Array.from({length:count},(_,i)=>fullPage(text,i).text.split('\n').length).every(n=>n<=9));
+});

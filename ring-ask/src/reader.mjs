@@ -52,3 +52,9 @@ export function deadline(promise,ms,message='Connection timed out') {
 
 export const keywordPattern=/\b(?:Snowflake|TIDAL|BigQuery|SQL|Python|PySpark|Kafka|Airflow|Composer|QFC|MERGE|CTEs?|reconciliation|backfill|\d+(?:\.\d+)?%)\b/gi;
 export function emphasize(text,raw){return settings(raw).emphasis==='off'?text:text.replace(keywordPattern,word=>word.toUpperCase());}
+
+export function fullPage(text,index=0){
+ const all=lines(text,{width:564,words:12,emphasis:'off'}),count=Math.max(1,Math.ceil(all.length/9));
+ const page=Math.max(0,Math.min(count-1,index));
+ return {text:all.slice(page*9,page*9+9).join('\n'),page,count};
+}
