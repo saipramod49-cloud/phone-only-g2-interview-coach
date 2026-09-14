@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Recorder,gesture,pages,MAX_BYTES,controlAction,recoveryDelay} from '../src/controller.mjs';
+import {Recorder,gesture,gestures,pages,MAX_BYTES,controlAction,recoveryDelay} from '../src/controller.mjs';
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function setup(mic=async()=>true,submit=async()=>{}) {const messages=[];return {recorder:new Recorder(mic,x=>messages.push(x),submit),messages};}
 test('tap → audio → double tap submits once and ignores idle audio',async()=>{
@@ -31,6 +31,10 @@ test('cancellation stays responsive while answer is processing',async()=>{
 });
 test('SDK zero normalization is only a tap for an input envelope',()=>{
   assert.equal(gesture({textEvent:{containerID:1}}),0);assert.equal(gesture({audioEvent:{}}),null);assert.equal(gesture({sysEvent:{eventType:10}}),10);
+});
+test('input gestures survive a simultaneous non-input system event',()=>{
+  assert.deepEqual(gestures({textEvent:{eventType:2},sysEvent:{eventType:8}}),[2]);
+  assert.deepEqual(gestures({sysEvent:{eventType:3}}),[3]);
 });
 test('pagination keeps long answers readable and splits oversized words',()=>{
   const result=pages('A '.repeat(500)+'B'.repeat(100));assert.ok(result.length>1);for(const page of result)for(const line of page.split('\n'))assert.ok(line.length<=40);

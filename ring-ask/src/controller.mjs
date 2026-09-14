@@ -20,6 +20,11 @@ export function gesture(event) {
   const input = event.textEvent ?? event.listEvent;
   return input ? input.eventType ?? 0 : null;
 }
+export function gestures(event) {
+  const values = [event.textEvent?.eventType, event.listEvent?.eventType];
+  if ([0,1,2,3,9,10].includes(event.sysEvent?.eventType)) values.push(event.sysEvent.eventType);
+  return [...new Set(values.filter(value => value != null))];
+}
 export class Recorder {
   constructor(mic, change, submit) {
     this.mic=mic; this.change=change; this.submit=submit; this.state='ready'; this.mode='tap'; this.chunks=[]; this.bytes=0; this.held=false; this.queue=Promise.resolve();
