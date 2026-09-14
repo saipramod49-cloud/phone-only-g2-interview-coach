@@ -11,3 +11,5 @@ Validation: build, 25 tests, SDK container validation, and measured 10-line page
 Version 0.4.3: answers now target 2–4 concise bullets and 35–65 words, with one emphasized key phrase per bullet. Uppercase phrases render bold in the phone and image-font views; native text preserves capitals because it has no bold API. Three real profile questions were evaluated in outputs/natural-answer-evaluation.json.
 
 Adaptive answer update: the agent chooses compact text flows for processes, plain-language definitions with small examples for concepts, and grounded bullets for experience and comparisons. Backend health identifies answer_style adaptive-clear-v1. Frontend remains v0.4.3; no new QR is required. Four real model questions and 15 backend tests passed.
+
+Version 0.4.4: glasses recovery continues while Ring Ask remains active, using a capped 15-second retry delay. A ring tap received during recovery is remembered and starts listening after reconnection; releasing before recovery cancels the pending microphone start. The phone checks Render health every four minutes while online.

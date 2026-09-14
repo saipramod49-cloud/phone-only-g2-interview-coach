@@ -1,11 +1,11 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
-import {Recorder,gesture,controlAction} from './controller.mjs';
+import {Recorder,gesture,controlAction,recoveryDelay} from './controller.mjs';
 import {fullPage,readingSettings,deadline,emphasisParts} from './reader.mjs';
 import './style.css';
 import {bitmapPage,imageContainers,BitmapDisplay} from './bitmap';
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
 const backend=el<HTMLInputElement>('backend'),token=el<HTMLInputElement>('token');
-let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,connecting=false,recoveryAttempts=0;
+let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,connecting=false,recoveryAttempts=0,pendingListen=false;
 let reading=readingSettings(),layoutDirty=false;const bitmap=new BitmapDisplay();
 let status='Ready',answer='',offset=0;
 let abort:AbortController|undefined,retryAudio:Uint8Array|undefined;
@@ -71,8 +71,8 @@ async function paint(){
   finally{painting=false;}
 }
 function scheduleRecovery(){
-  if(recovering||connecting||!active||recoveryAttempts>=5)return;
-  const delay=[1000,2000,4000,8000,12000][recoveryAttempts++];
+  if(recovering||connecting||!active)return;
+  const delay=recoveryDelay(recoveryAttempts++);
   recovering=setTimeout(()=>{recovering=undefined;void connect();},delay);
 }
 async function connect(){
@@ -84,8 +84,11 @@ async function connect(){
     if(created){try{const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({...pageDefinition()})),6000);if(!ok)created=false;}catch{created=false;}}
     if(!created) {const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer({...pageDefinition()})),6000);if(result!==0)throw new Error(`Glasses page unavailable (${result})`);created=true;}
     bitmap.reset();layoutDirty=false;lastPaintedAnswer=undefined;screenReady=true;recoveryAttempts=0;el('connection').textContent='Glasses connected';el('hint').textContent='Tap, wait for Listening, then speak. Your last answer stays available after reconnecting.';render();
+    if(pendingListen&&recorder.state==='ready'&&token.value.trim()){
+      pendingListen=false;status='Starting microphone…';render();void recorder.dispatch(0);
+    }
     if(token.value&&!apiReady)void checkConnection(false);
-  }catch(error){screenReady=false;el('connection').textContent=recoveryAttempts>=5?'Open or resume Ring Ask in Even Hub':'Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
+  }catch(error){screenReady=false;el('connection').textContent='Glasses reconnecting…';el('hint').textContent=`${(error as Error).message} Retrying automatically.`;}
   finally{connecting=false;if(!screenReady)scheduleRecovery();}
 }
 function subscribe(){
@@ -93,7 +96,7 @@ function subscribe(){
     if(event.audioEvent){lastAudioAt=Date.now();recorder.audio(event.audioEvent.audioPcm);}
     const type=gesture(event);if(type===null)return;
     if(type===4){active=true;recoveryAttempts=0;if(!screenReady)void connect();return;}
-    if([5,6,7].includes(type)){active=false;screenReady=false;abort?.abort();void recorder.dispatch(5);saveAnswer();return;}
+    if([5,6,7].includes(type)){active=false;pendingListen=false;screenReady=false;abort?.abort();void recorder.dispatch(5);saveAnswer();return;}
     if([0,1,2,3,9,10].includes(type))el('input-status').textContent=`Input ${++inputCount}: ${['tap','up','down','double tap'][type]||(type===9?'hold':'release')}`;
     dispatch(type);
   });
@@ -110,9 +113,10 @@ function dispatch(type:number){
  if(action==='listen'){
   if(recorder.state!=='ready')return;
   if(!token.value.trim()){status='Set up connection on phone';el('health').textContent='Enter your bridge token and save.';render();return;}
-  if(!screenReady){recoveryAttempts=0;void connect();status='Reconnecting · tap again when connected';render();return;}
+  if(!screenReady){pendingListen=true;recoveryAttempts=0;void connect();status='Reconnecting · listening will start automatically';render();return;}
   retryAudio=undefined;void recorder.dispatch(type);
  }else if(action==='answer'&&['starting','listening'].includes(recorder.state))void recorder.dispatch(10);
+ else if(action==='answer'&&pendingListen){pendingListen=false;status='Reconnecting · tap when Ready';render();}
 }
 async function submit(pcm:Uint8Array){
   retryAudio=pcm;abort?.abort();const current=new AbortController();abort=current;
@@ -170,4 +174,5 @@ window.addEventListener('online',resume);window.addEventListener('pageshow',resu
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();else saveAnswer();});
 window.addEventListener('pagehide',()=>{abort?.abort();void recorder.dispatch(5);saveAnswer();});
 setInterval(()=>{if(recorder.state==='listening'&&Date.now()-lastAudioAt>6500){screenReady=false;void recorder.dispatch(5).then(()=>{status='Microphone dropped · tap to record again';render();});el('hint').textContent='No microphone audio received. Restoring the glasses connection.';recoveryAttempts=0;scheduleRecovery();}},2000);
+setInterval(()=>{if(active&&token.value&&navigator.onLine&&!checking)void checkConnection(false);},240000);
 render();void connect();if(token.value)void checkConnection(false);

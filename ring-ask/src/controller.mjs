@@ -73,3 +73,8 @@ export function controlAction(type,active=true){
  if(!active)return null;
  return ({0:'listen',1:'previous',2:'next',9:'listen',10:'answer'})[type]??null;
 }
+
+export function recoveryDelay(attempt){
+ const delays=[1000,2000,4000,8000,12000,15000];
+ return delays[Math.min(Math.max(0,attempt),delays.length-1)];
+}

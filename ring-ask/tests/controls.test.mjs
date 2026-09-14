@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Recorder,gesture,pages,MAX_BYTES,controlAction} from '../src/controller.mjs';
+import {Recorder,gesture,pages,MAX_BYTES,controlAction,recoveryDelay} from '../src/controller.mjs';
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function setup(mic=async()=>true,submit=async()=>{}) {const messages=[];return {recorder:new Recorder(mic,x=>messages.push(x),submit),messages};}
 test('tap → audio → double tap submits once and ignores idle audio',async()=>{
@@ -57,4 +57,8 @@ test('tap then hold keeps one recording and release submits once',async()=>{
 test('hold alone also starts and release stops in press mode',async()=>{
  const calls=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;});r.mode='press';
  await r.dispatch(9);r.audio(new Uint8Array(6400));await r.dispatch(10);await tick();assert.deepEqual(calls,[true,false]);
+});
+
+test('connection recovery backs off but continues indefinitely',()=>{
+ assert.deepEqual([0,1,2,3,4,5,20].map(recoveryDelay),[1000,2000,4000,8000,12000,15000,15000]);
 });
