@@ -9,7 +9,7 @@ const backend=el<HTMLInputElement>('backend'),token=el<HTMLInputElement>('token'
 let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,connecting=false,recoveryAttempts=0,pendingListen=false;
 let reading=readingSettings(),layoutDirty=false;const bitmap=new BitmapDisplay();
 type AnswerView='flow'|'spoken'|'keywords';
-let status='Ready',answer='',spokenAnswer='',flowAnswer='',keywordsAnswer='',rawAnswer='',viewMode:AnswerView='flow',offset=0;
+let status='Ready',answer='',spokenAnswer='',flowAnswer='',keywordsAnswer='',rawAnswer='',viewMode:AnswerView='spoken',offset=0;
 let answerStyle='natural',answerInstructions='',keepInstructions=false;
 let abort:AbortController|undefined,retryAudio:Uint8Array|undefined;
 let recovering:ReturnType<typeof setTimeout>|undefined,paintTimer:ReturnType<typeof setTimeout>|undefined,painting=false,dirty=false;
@@ -26,8 +26,8 @@ const recorder=new Recorder(async(on:boolean)=>{
 },(message:string|null)=>{if(message){status=message;if(message==='Listening'){lastAudioAt=Date.now();}}render();},submit);
 recorder.mode='press';
 function saveAnswer(){try{localStorage.setItem('ring-ask-answer',JSON.stringify({answer,spokenAnswer,flowAnswer,keywordsAnswer,viewMode,offset,question:questionText}));}catch{}}
-function selectView(next:AnswerView){const content={flow:flowAnswer,spoken:spokenAnswer,keywords:keywordsAnswer}[next];if(!content)return;viewMode=next;answer=content;offset=0;const position={flow:1,spoken:2,keywords:3}[viewMode];status=`Answer ${position}/3 · ${viewMode.toUpperCase()}`;render();saveAnswer();}
-function toggleView(){const order:AnswerView[]=['flow','spoken','keywords'];for(let step=1;step<=order.length;step++){const next=order[(order.indexOf(viewMode)+step)%order.length];if({flow:flowAnswer,spoken:spokenAnswer,keywords:keywordsAnswer}[next]){selectView(next);return;}}}
+function selectView(next:AnswerView){const content={flow:flowAnswer,spoken:spokenAnswer,keywords:keywordsAnswer}[next];if(!content)return;viewMode=next;answer=content;offset=0;const position={spoken:1,flow:2,keywords:3}[viewMode];status=`Answer ${position}/3 · ${viewMode.toUpperCase()}`;render();saveAnswer();}
+function toggleView(){const order:AnswerView[]=['spoken','flow','keywords'];for(let step=1;step<=order.length;step++){const next=order[(order.indexOf(viewMode)+step)%order.length];if({flow:flowAnswer,spoken:spokenAnswer,keywords:keywordsAnswer}[next]){selectView(next);return;}}}
 async function saveSettings(){
   const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading,nativeLayoutVersion:3,answerStyle,answerInstructions,keepInstructions});
   let saved=false;try{localStorage.setItem('ring-ask-settings',raw);saved=true;}catch{}
@@ -49,7 +49,7 @@ function render(){
  el('reading-note').textContent=`${f.rows} lines fit per page · ${reading.words==='auto'?'automatic full-width wrapping':`up to ${reading.words} words per line`}${reading.font==='native'?'':'. Custom font may update more slowly on glasses.'}`;
  const box=readingLayout(reading),preview=el('geometry-box');preview.style.width=`${box.width/5.76}%`;preview.style.height=`${box.height/2.88}%`;preview.style.left=`${box.x/5.76}%`;preview.style.top=`${box.y/2.88}%`;
  el('display').style.fontSize=reading.font==='native'?'':`${reading.font}px`;
- el('full-answer').textContent=(flowAnswer?'FLOW VIEW\n'+flowAnswer:'')+(spokenAnswer?'\n\nSPOKEN VIEW\n'+spokenAnswer:'')+(keywordsAnswer?'\n\nKEYWORDS\n'+keywordsAnswer:'');const labels={flow:'Next: spoken',spoken:'Next: keywords',keywords:'Next: flow'};el<HTMLButtonElement>('view').textContent=labels[viewMode];el<HTMLButtonElement>('view').disabled=![flowAnswer,spokenAnswer,keywordsAnswer].filter(Boolean).length;el('question').textContent=questionText?`Heard: ${questionText}`:'';
+ el('full-answer').textContent=(spokenAnswer?'SPOKEN VIEW\n'+spokenAnswer:'')+(flowAnswer?'\n\nFLOW VIEW\n'+flowAnswer:'')+(keywordsAnswer?'\n\nKEYWORDS\n'+keywordsAnswer:'');const labels={spoken:'Next: flow',flow:'Next: keywords',keywords:'Next: spoken'};el<HTMLButtonElement>('view').textContent=labels[viewMode];el<HTMLButtonElement>('view').disabled=![flowAnswer,spokenAnswer,keywordsAnswer].filter(Boolean).length;el('question').textContent=questionText?`Heard: ${questionText}`:'';
  el<HTMLButtonElement>('start').disabled=recorder.state==='busy';
  el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
  el<HTMLButtonElement>('up').disabled=offset===0;el<HTMLButtonElement>('down').disabled=offset>=f.count-1;
@@ -127,7 +127,7 @@ function dispatch(type:number){
 }
 async function submit(pcm:Uint8Array){
   retryAudio=pcm;abort?.abort();const current=new AbortController();abort=current;
-  const timeout=setTimeout(()=>current.abort(),95000);answer='';spokenAnswer='';flowAnswer='';keywordsAnswer='';rawAnswer='';viewMode='flow';offset=0;questionText='';questionStart=performance.now();firstText=0;el('timing').textContent='Sending your question…';render();
+  const timeout=setTimeout(()=>current.abort(),95000);answer='';spokenAnswer='';flowAnswer='';keywordsAnswer='';rawAnswer='';viewMode='spoken';offset=0;questionText='';questionStart=performance.now();firstText=0;el('timing').textContent='Sending your question…';render();
   try{
     const requestInstructions=answerInstructions.trim();
     const response=await fetch(backend.value.replace(/\/$/,'')+'/api/ask',{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:`Bearer ${token.value.trim()}`,'X-Answer-Style':answerStyle,'X-Answer-Instructions':encodeURIComponent(requestInstructions)},body:new Blob([new Uint8Array(pcm)]),signal:current.signal});
@@ -136,8 +136,8 @@ async function submit(pcm:Uint8Array){
       if(!line.trim())return;const event=JSON.parse(line);
       if(event.type==='status')status=event.text;
       if(event.type==='transcript'){questionText=event.text;status='Thinking…';el('timing').textContent=`Transcribed in ${(event.transcriptionMs/1000).toFixed(1)}s · waiting for first words…`;}
-      if(event.type==='delta'){if(!firstText){firstText=performance.now();el('timing').textContent=`First words in ${((firstText-questionStart)/1000).toFixed(1)}s`; }status='Answer arriving…';rawAnswer+=event.text;const partial=answerVariants(rawAnswer);flowAnswer=partial.flow;spokenAnswer=partial.spoken;keywordsAnswer=partial.keywords;answer=flowAnswer;}
-      if(event.type==='done'){done=true;const parsed=answerVariants(rawAnswer);spokenAnswer=parsed.spoken;flowAnswer=parsed.flow;keywordsAnswer=parsed.keywords;viewMode='flow';answer=flowAnswer||spokenAnswer||keywordsAnswer;status=flowAnswer?'Answer 1/3 · FLOW':'Answer ready';retryAudio=undefined;if(requestInstructions&&!keepInstructions){answerInstructions='';el<HTMLTextAreaElement>('answer-instructions').value='';el('instruction-status').textContent='Next-answer request used and cleared.';void saveSettings();}el('timing').textContent=`First words ${firstText?((firstText-questionStart)/1000).toFixed(1):'—'}s · complete ${((performance.now()-questionStart)/1000).toFixed(1)}s`;saveAnswer();}
+      if(event.type==='delta'){if(!firstText){firstText=performance.now();el('timing').textContent=`First words in ${((firstText-questionStart)/1000).toFixed(1)}s`; }status='Answer arriving…';rawAnswer+=event.text;const partial=answerVariants(rawAnswer);flowAnswer=partial.flow;spokenAnswer=partial.spoken;keywordsAnswer=partial.keywords;answer=spokenAnswer;}
+      if(event.type==='done'){done=true;const parsed=answerVariants(rawAnswer);spokenAnswer=parsed.spoken;flowAnswer=parsed.flow;keywordsAnswer=parsed.keywords;viewMode=spokenAnswer?'spoken':flowAnswer?'flow':'keywords';answer=spokenAnswer||flowAnswer||keywordsAnswer;status=spokenAnswer?'Answer 1/3 · SPOKEN':'Answer ready';retryAudio=undefined;if(requestInstructions&&!keepInstructions){answerInstructions='';el<HTMLTextAreaElement>('answer-instructions').value='';el('instruction-status').textContent='Next-answer request used and cleared.';void saveSettings();}el('timing').textContent=`First words ${firstText?((firstText-questionStart)/1000).toFixed(1):'—'}s · complete ${((performance.now()-questionStart)/1000).toFixed(1)}s`;saveAnswer();}
       if(event.type==='error')throw new Error(event.text);
       render();
     };
@@ -178,7 +178,7 @@ el('reset-reading').onclick=()=>{reading=readingSettings({font:'native',rows:10,
 el('apply-instructions').onclick=()=>{answerStyle=el<HTMLSelectElement>('answer-style').value;answerInstructions=el<HTMLTextAreaElement>('answer-instructions').value.trim();keepInstructions=el<HTMLInputElement>('keep-instructions').checked;const label=el<HTMLSelectElement>('answer-style').selectedOptions[0]?.textContent||'Selected format';el('instruction-status').textContent=`${label}${answerInstructions?` · ${keepInstructions?'saved for every answer':'applies to the next answer'}`:''}.`;void saveSettings();};
 el('save').onclick=()=>{touched=true;void checkConnection(true);};
 for(const input of [backend,token])input.oninput=()=>{touched=true;};
-el('demo').onclick=()=>{if(recorder.state!=='ready')return;status='Reading sample';spokenAnswer="Right now, my work is focused on the QFC regulatory reporting platform at Mizuho. I work with Snowflake SQL and TIDAL to move source data through staging, work, and extract tables.\n\nA big part of my role is checking that the final extracts reconcile correctly before publication. That means tracing missing records, duplicate positions, and mapping issues back through the transformations rather than assuming a successful load means the data is correct.";flowAnswer='QFC REPORTING — build Snowflake transformations\n-> RECONCILE — compare extracts with source\n-> INVESTIGATE — trace missing or duplicate records\n-> PUBLISH — release only after checks pass';keywordsAnswer='SNOWFLAKE · TIDAL · RECONCILIATION · VALIDATION';viewMode='flow';answer=flowAnswer;offset=0;render();saveAnswer();};
+el('demo').onclick=()=>{if(recorder.state!=='ready')return;status='Reading sample';spokenAnswer="Right now, my work is focused on the QFC regulatory reporting platform at Mizuho. I work with Snowflake SQL and TIDAL to move source data through staging, work, and extract tables.\n\nA big part of my role is checking that the final extracts reconcile correctly before publication. That means tracing missing records, duplicate positions, and mapping issues back through the transformations rather than assuming a successful load means the data is correct.";flowAnswer='QFC REPORTING — build Snowflake transformations\n-> RECONCILE — compare extracts with source\n-> INVESTIGATE — trace missing or duplicate records\n-> PUBLISH — release only after checks pass';keywordsAnswer='SNOWFLAKE · TIDAL · RECONCILIATION · VALIDATION';viewMode='spoken';answer=spokenAnswer;offset=0;render();saveAnswer();};
 function resume(){active=true;recoveryAttempts=0;if(!screenReady)void connect();if(token.value)void checkConnection(false);render();}
 window.addEventListener('online',resume);window.addEventListener('pageshow',resume);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();else saveAnswer();});

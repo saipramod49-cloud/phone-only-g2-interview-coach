@@ -8,6 +8,6 @@ export function answerVariants(text) {
     const end=index+1<headers.length ? headers[index+1].index : clean.length;
     result[key]=clean.slice(start,end).trim();
   }
-  if (!headers.length) result.flow=clean;
+  if (!headers.length) result.spoken=clean;
   return result;
 }

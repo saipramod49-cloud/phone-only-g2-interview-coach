@@ -40,7 +40,7 @@ class StreamTests(unittest.TestCase):
             profile=Path(folder)/'profile.md';profile.write_text('Verified note: QFC uses Snowflake and TIDAL.')
             with patch.object(ring_agent.bridge,'EXPERIENCE',profile):
                 prompt=ring_agent.prompt('natural')
-                self.assertIn(profile.read_text(),prompt);self.assertLess(prompt.index('FLOW:'),prompt.index('SPOKEN:'));self.assertIn('KEYWORDS:',prompt)
+                self.assertIn(profile.read_text(),prompt);self.assertLess(prompt.index('SPOKEN:'),prompt.index('FLOW:'));self.assertIn('KEYWORDS:',prompt)
                 self.assertNotIn('Reply with one to three short bullet points',prompt)
     def test_custom_request_and_format_are_added_to_prompt(self):
         prompt=ring_agent.prompt('technical','Explain the trade-off for a beginner.')

@@ -11,3 +11,5 @@ test('streams the flow before later views arrive',()=>{
  const value=answerVariants('FLOW:\nASSESS — inspect the data');
  assert.equal(value.flow,'ASSESS — inspect the data');assert.equal(value.spoken,'');assert.equal(value.keywords,'');
 });
+
+test("spoken streams before flow arrives",()=>{const value=answerVariants("SPOKEN:\nI would start with the requirements.");assert.equal(value.spoken,"I would start with the requirements.");assert.equal(value.flow,"");});
