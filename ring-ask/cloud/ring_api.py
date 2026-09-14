@@ -10,6 +10,7 @@ import urllib.error
 import uuid
 import wave
 import time
+import urllib.parse
 import ring_agent
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def transcribe(pcm, key):
 def handle(environ, start_response, credentials, conversation, model):
     path = environ.get('PATH_INFO', '')
     method = environ.get('REQUEST_METHOD', 'GET')
-    cors = [('Access-Control-Allow-Origin','*'),('Access-Control-Allow-Headers','Authorization, Content-Type, X-Answer-Style'),
+    cors = [('Access-Control-Allow-Origin','*'),('Access-Control-Allow-Headers','Authorization, Content-Type, X-Answer-Style, X-Answer-Instructions'),
             ('Access-Control-Allow-Methods','GET, POST, OPTIONS'),('Cache-Control','no-store')]
     def reply(status, data):
         raw = json.dumps(data).encode()
@@ -62,7 +63,7 @@ def handle(environ, start_response, credentials, conversation, model):
     if not hmac.compare_digest(environ.get('HTTP_AUTHORIZATION',''),'Bearer '+credentials['bridge_token']):
         return reply('401 Unauthorized', {'error':'Enter the bridge token already used by your Even AI agent.'})
     if path == '/api/health' and method == 'GET':
-        return reply('200 OK', {'configured': bool(credentials.get('api_key')), 'model':model, 'profile_loaded':ring_agent.bridge.EXPERIENCE.exists(), 'version':'0.5.1', 'answer_style':'flow-spoken-keywords-v1'})
+        return reply('200 OK', {'configured': bool(credentials.get('api_key')), 'model':model, 'profile_loaded':ring_agent.bridge.EXPERIENCE.exists(), 'version':'0.6.0', 'answer_style':'flow-spoken-keywords-v2'})
     if path != '/api/ask': return reply('404 Not Found', {'error':'Not found'})
     if method != 'POST': return reply('405 Method Not Allowed', {'error':'POST required'})
     if environ.get('CONTENT_TYPE','').split(';')[0] != 'application/octet-stream':
@@ -88,7 +89,8 @@ def handle(environ, start_response, credentials, conversation, model):
             question = transcribe(pcm, credentials['api_key'])
             yield event('transcript', text=question, transcriptionMs=round((time.perf_counter()-start)*1000))
             style=environ.get('HTTP_X_ANSWER_STYLE','natural')
-            for item in ring_agent.conversation.stream(question, model, credentials['api_key'], style):
+            instructions=urllib.parse.unquote(environ.get('HTTP_X_ANSWER_INSTRUCTIONS',''))[:800].replace('\r',' ').replace('\n',' ')
+            for item in ring_agent.conversation.stream(question, model, credentials['api_key'], style, instructions):
                 yield (json.dumps(item)+'\n').encode()
         except urllib.error.HTTPError as error:
             yield event('error', text='OpenAI request failed (HTTP %s). Check API access and billing.' % error.code)

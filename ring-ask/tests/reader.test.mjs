@@ -62,7 +62,7 @@ test('full-screen pages retain the complete answer through the last page',async(
 
 test('new reading settings cap lines and words at ten',async()=>{
  const {readingSettings,fullPage,measuredPage}=await import('../src/reader.mjs');
- assert.deepEqual(readingSettings({rows:99,words:99,font:'bogus'}),{rows:10,words:10,font:'native'});
+ assert.deepEqual(readingSettings({rows:99,words:99,font:'bogus'}),{rows:10,words:10,font:'native',width:576,x:50,y:50});
  const text='one two three four five six seven eight nine ten eleven twelve '.repeat(30).trim();
  for(const rows of [1,5,10])for(const words of [1,4,10]){
   const p=fullPage(text,0,{rows,words});assert.ok(p.text.split('\n').length<=rows);
@@ -73,6 +73,14 @@ test('new reading settings cap lines and words at ten',async()=>{
  const n=large.count;
  const reconstructed=Array.from({length:n},(_,i)=>measuredPage(text,i,{rows:10,words:10,font:'30'},x=>x.length*16).text).join(' ').replace(/\s+/g,' ');
  assert.equal(reconstructed,text);
+});
+
+test('full-page reading box moves independently from its width',async()=>{
+ const {readingLayout,fullPage}=await import('../src/reader.mjs');
+ const left=readingLayout({width:440,x:0,rows:5}),right=readingLayout({width:440,x:100,rows:5});
+ assert.equal(left.width,right.width);assert.equal(left.x,0);assert.equal(right.x,136);
+ assert.equal(fullPage('one two three four five six',0,{width:440,x:0,words:'auto'}).text,
+              fullPage('one two three four five six',0,{width:440,x:100,words:'auto'}).text);
 });
 
 test('paragraph gaps become one divider row in each renderer',async()=>{

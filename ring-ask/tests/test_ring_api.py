@@ -11,9 +11,10 @@ class Conversation:
         assert q=='What is a data warehouse?'
         return 'A store for analytical data.',{}
 class RingTests(unittest.TestCase):
-    def call(self,path='/api/ask',auth='Bearer test',body=b'\0'*6400,method='POST'):
+    def call(self,path='/api/ask',auth='Bearer test',body=b'\0'*6400,method='POST',extra=None):
         status=[]
         env={'PATH_INFO':path,'REQUEST_METHOD':method,'HTTP_AUTHORIZATION':auth,'CONTENT_TYPE':'application/octet-stream','CONTENT_LENGTH':str(len(body)),'wsgi.input':io.BytesIO(body)}
+        env.update(extra or {})
         response=ring_api.handle(env,lambda s,h:status.append(s),{'bridge_token':'test','api_key':'fake'},Conversation(),'gpt-5.6-sol')
         return status,b''.join(response) if response is not None else None
     def test_bad_token(self):
@@ -26,6 +27,10 @@ class RingTests(unittest.TestCase):
         with patch.object(ring_api,'transcribe',return_value='What is a data warehouse?'), patch.object(ring_api.ring_agent.conversation,'stream',return_value=iter([{'type':'delta','text':'A store for analytical data.'},{'type':'delta','text':' More detail.'},{'type':'done'}])):
             status,body=self.call();events=[json.loads(line) for line in body.splitlines()]
             self.assertEqual(status,['200 OK']);self.assertEqual([e['type'] for e in events],['status','transcript','delta','delta','done']);self.assertIn('analytical',events[2]['text'])
+    def test_answer_format_and_request_reach_agent(self):
+        with patch.object(ring_api,'transcribe',return_value='What is a data warehouse?'), patch.object(ring_api.ring_agent.conversation,'stream',return_value=iter([{'type':'done'}])) as stream:
+            self.call(extra={'HTTP_X_ANSWER_STYLE':'technical','HTTP_X_ANSWER_INSTRUCTIONS':'Explain%20simply'})
+            self.assertEqual(stream.call_args.args[-2:],('technical','Explain simply'))
     def test_failure_unlocks_next_question(self):
         with patch.object(ring_api,'transcribe',side_effect=RuntimeError('private details')):
             _,body=self.call();self.assertNotIn(b'private details',body);self.assertIn(b'error',body)

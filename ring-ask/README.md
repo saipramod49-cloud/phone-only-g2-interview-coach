@@ -1,4 +1,8 @@
-# Ring Ask v0.4.2
+# Ring Ask v0.6.0
+
+Open Ring Ask directly in [Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), inspect the [live Render deployment](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or view the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
+
+Version 0.6.0 adds persistent answer-format choices and an optional plain-language request for the next answer. A one-time request clears after a successful answer; the user can choose to keep it for every answer. The reading box supports independent width, horizontal position, vertical position, 1–10 lines, 1–10 words per line, and native or custom font sizes. Moving the box no longer changes its width or wrapping.
 
 Tap starts listening; hold continues; release submits. Swipe between answer pages. Controls are unchanged from v0.3.2.
 

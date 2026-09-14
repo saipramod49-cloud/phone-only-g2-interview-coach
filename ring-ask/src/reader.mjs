@@ -46,22 +46,28 @@ export const keywordPattern=/\b(?:Snowflake|TIDAL|BigQuery|SQL|Python|PySpark|Ka
 export function emphasize(text,raw){return settings(raw).emphasis==='off'?text:text.replace(keywordPattern,word=>word.toUpperCase());}
 
 export function readingSettings(raw={}){
- return {rows:clamp(raw.rows,1,10,10),words:raw.words==='auto'?'auto':clamp(raw.words,1,10,10),font:['native','18','22','26','30'].includes(String(raw.font))?String(raw.font):'native'};
+ return {rows:clamp(raw.rows,1,10,10),words:raw.words==='auto'?'auto':clamp(raw.words,1,10,10),font:['native','18','22','26','30'].includes(String(raw.font))?String(raw.font):'native',
+  width:clamp(raw.width,360,576,576),x:clamp(raw.x,0,100,50),y:clamp(raw.y,0,100,50)};
+}
+export function readingLayout(raw={}){
+ const pref=readingSettings(raw),lineHeight=pref.font==='native'?28:Number(pref.font)+4;
+ const height=Math.min(288,Math.max(lineHeight+8,pref.rows*lineHeight+8));
+ return {width:pref.width,height,x:Math.round((576-pref.width)*pref.x/100),y:Math.round((288-height)*pref.y/100)};
 }
 export function fullPage(text,index=0,raw={}){
- const pref=readingSettings(raw);
- const all=lines(text,{width:564,contentWidth:568,words:pref.words,emphasis:'off'}),count=Math.max(1,Math.ceil(all.length/pref.rows));
+ const pref=readingSettings(raw),box=readingLayout(pref),contentWidth=Math.max(336,box.width-8);
+ const all=lines(text,{width:box.width,contentWidth,words:pref.words,emphasis:'off'}),count=Math.max(1,Math.ceil(all.length/pref.rows));
  const page=Math.max(0,Math.min(count-1,index));
  return {text:all.slice(page*pref.rows,page*pref.rows+pref.rows).map(line=>line===''?'----------------------------------------':line).join('\n'),page,count,rows:pref.rows};
 }
 export function measuredPage(text,index,raw,measure){
- const pref=readingSettings(raw),size=Number(pref.font),rows=Math.min(pref.rows,Math.floor(280/(size+4))),all=[];
+ const pref=readingSettings(raw),box=readingLayout(pref),size=Number(pref.font),rows=Math.min(pref.rows,Math.floor((box.height-8)/(size+4))),lineWidth=box.width-16,all=[];
  for(const paragraph of text.split('\n')){
   if(!paragraph.trim()){if(all.length&&all.at(-1)!=='')all.push('');continue;}
   let line='',words=0;
   for(const word of paragraph.trim().split(/\s+/)){
-   if(line&&(words>=(pref.words==='auto'?Infinity:pref.words)||measure(line+' '+word)>560)){all.push(line);line='';words=0;}
-   let part='';for(const char of word){if(part&&measure(part+char)>560){all.push(part);part='';}part+=char;}
+   if(line&&(words>=(pref.words==='auto'?Infinity:pref.words)||measure(line+' '+word)>lineWidth)){all.push(line);line='';words=0;}
+   let part='';for(const char of word){if(part&&measure(part+char)>lineWidth){all.push(part);part='';}part+=char;}
    line+=(line?' ':'')+part;words++;
   }
   if(line)all.push(line);

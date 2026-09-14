@@ -42,4 +42,8 @@ class StreamTests(unittest.TestCase):
                 prompt=ring_agent.prompt('natural')
                 self.assertIn(profile.read_text(),prompt);self.assertLess(prompt.index('FLOW:'),prompt.index('SPOKEN:'));self.assertIn('KEYWORDS:',prompt)
                 self.assertNotIn('Reply with one to three short bullet points',prompt)
+    def test_custom_request_and_format_are_added_to_prompt(self):
+        prompt=ring_agent.prompt('technical','Explain the trade-off for a beginner.')
+        self.assertIn('mechanism, trade-off, and validation',prompt)
+        self.assertIn('<user_answer_request>\nExplain the trade-off for a beginner.',prompt)
 if __name__=='__main__':unittest.main()

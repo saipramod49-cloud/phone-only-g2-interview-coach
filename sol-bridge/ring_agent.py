@@ -32,19 +32,24 @@ Current QFC work uses Mizuho, Snowflake SQL, TIDAL, staging/work/extract tables 
 
 
 
-def prompt(style):
+def prompt(style, instructions=''):
     lengths = {'brief':'Keep SPOKEN to 35–55 words, FLOW to 3 nodes, and KEYWORDS to 4–5 terms.',
                'natural':'Keep SPOKEN concise and conversational. Keep FLOW to 3–5 short nodes and KEYWORDS to 4–7 terms. Short follow-ups can be shorter.',
                'detailed':'Keep SPOKEN to 90–130 words, FLOW to 4–6 nodes, and KEYWORDS to 5–7 terms when detail is requested.'}
+    formats = {
+        'behavioral':'Shape SPOKEN as a concise STAR story when candidate evidence supports it. Keep it conversational and never invent a story.',
+        'technical':'Explain the technical decision, mechanism, trade-off, and validation clearly. Define unfamiliar terms briefly.',
+        'architecture':'For scenario questions, structure FLOW as REQUIREMENTS -> DESIGN -> CONTROLS -> VALIDATE and keep the spoken explanation practical.'}
     background = bridge.EXPERIENCE.read_text(encoding='utf-8').strip() if bridge.EXPERIENCE.exists() else ''
-    return STYLE + '\n' + lengths.get(style, lengths['natural']) + '\n<candidate_background>\n' + background + '\n</candidate_background>'
+    request = ('\n<user_answer_request>\n'+instructions+'\n</user_answer_request>\nFollow this request when it is compatible with accuracy and the required three-view output.') if instructions else ''
+    return STYLE + '\n' + lengths.get(style, lengths['natural']) + '\n' + formats.get(style, '') + request + '\n<candidate_background>\n' + background + '\n</candidate_background>'
 
 class RingConversation:
     def __init__(self):
         self.history = deque(maxlen=8)
         self.last_seen = time.monotonic()
 
-    def stream(self, question, model, key, style='natural'):
+    def stream(self, question, model, key, style='natural', instructions=''):
         if time.monotonic() - self.last_seen > 1800:
             self.history.clear()
         self.last_seen = time.monotonic()
@@ -53,7 +58,7 @@ class RingConversation:
             yield {'type':'delta','text':'New conversation started.'}
             yield {'type':'done'}
             return
-        payload = {'model':model,'messages':[{'role':'system','content':prompt(style)}]+list(self.history)+[{'role':'user','content':question}],
+        payload = {'model':model,'messages':[{'role':'system','content':prompt(style, instructions)}]+list(self.history)+[{'role':'user','content':question}],
                    'stream':True,'store':False,'reasoning_effort':'low' if model=='gpt-6-astra' else 'none',
                    'max_completion_tokens':2048 if model=='gpt-6-astra' else (700 if style=='detailed' else 480)}
         if model in ('gpt-5.6-sol','gpt-6-astra'): payload['service_tier']='fast'
