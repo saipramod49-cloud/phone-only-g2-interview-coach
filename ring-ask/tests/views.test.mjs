@@ -2,13 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {answerVariants} from '../src/views.mjs';
 
-test('splits spoken and flow views',()=>{
- const value=answerVariants('SPOKEN:\nI would start small.\nFLOW:\nDISCOVER — choose a use case\n-> PILOT — verify value');
- assert.equal(value.spoken,'I would start small.');
- assert.match(value.flow,/DISCOVER/);
+test('splits flow, spoken and keyword views in display order',()=>{
+ const value=answerVariants('FLOW:\nDISCOVER — choose a use case\n-> PILOT — verify value\nSPOKEN:\nI would start small.\n\nThen I would measure the result.\nKEYWORDS:\nDISCOVER · PILOT · MEASURE');
+ assert.match(value.flow,/DISCOVER/);assert.match(value.spoken,/start small/);assert.equal(value.keywords,'DISCOVER · PILOT · MEASURE');
 });
 
-test('streams spoken content before flow arrives',()=>{
- const value=answerVariants('SPOKEN:\nI would assess the data first.');
- assert.equal(value.spoken,'I would assess the data first.');assert.equal(value.flow,'');
+test('streams the flow before later views arrive',()=>{
+ const value=answerVariants('FLOW:\nASSESS — inspect the data');
+ assert.equal(value.flow,'ASSESS — inspect the data');assert.equal(value.spoken,'');assert.equal(value.keywords,'');
 });
