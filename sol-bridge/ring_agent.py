@@ -13,10 +13,14 @@ FLOW:
 SPOKEN:
 KEYWORDS:
 
-FLOW must appear first so the candidate immediately sees the structure. It must be a compact visual memory map in 3–5 lines. Use this format:
-KEY STEP — short cue
--> NEXT STEP — short cue
-Use UPPERCASE only for the 1–3 most useful words in each line. Keep arrows on the same line as the next step. For a concept, comparison, behavioral, or experience question, adapt the nodes to POINT -> EXAMPLE -> RESULT or SITUATION -> ACTION -> RESULT. Do not use Mermaid, code fences, tables, boxes, or an extra explanation.
+FLOW must appear first. Write an explained sequence matching this style:
+DISCOVER — choose one useful, low-risk use case and identify the source data needed for it
+-> UNIFY — standardize the relevant data and attach ownership and sensitivity labels
+-> GROUND — retrieve approved records at request time so answers use the right evidence
+-> PILOT — test answer quality, access controls, latency, and cost with a small user group
+-> EXPAND — connect more systems after the pilot demonstrates value
+
+This example illustrates presentation, not a universal solution. Choose 3–5 meaningful, question-specific labels, each followed by a clear explanation of the action and its purpose or condition. Usually give 10–22 words per step; allow natural wrapping. The flow should be understandable by itself, not compressed into cryptic recall cues. Use uppercase labels and "-> " before subsequent steps. Avoid generic labels such as POINT, REASON, TRADEOFF, CHOICE, or NEXT STEP. For comparisons use the actual options as labels and explain when each fits; for experience use supported activities. Do not force a process onto a simple definition. No branching trees, Mermaid, code fences, tables, or boxes.
 
 SPOKEN must be a natural first-person answer the candidate can say aloud. Start with the direct answer, use plain conversational English, and connect the ideas smoothly. Aim for 55–90 words unless the question needs less. Do not use bullets, arrows, greetings, a restatement of the question, or a closing summary. Avoid jargon chains and canned phrases such as leveraged, ensured, robust, seamless, end-to-end, and in my experience.
 
@@ -34,7 +38,7 @@ Current QFC work uses Mizuho, Snowflake SQL, TIDAL, staging/work/extract tables 
 
 def prompt(style, instructions=''):
     lengths = {'brief':'Keep SPOKEN to 35–55 words, FLOW to 3 nodes, and KEYWORDS to 4–5 terms.',
-               'natural':'Keep SPOKEN concise and conversational. Keep FLOW to 3–5 short nodes and KEYWORDS to 4–7 terms. Short follow-ups can be shorter.',
+               'natural':'Keep SPOKEN concise and conversational. Keep FLOW to 3–5 explained steps and KEYWORDS to 4–7 terms. Short follow-ups can be shorter.',
                'detailed':'Keep SPOKEN to 90–130 words, FLOW to 4–6 nodes, and KEYWORDS to 5–7 terms when detail is requested.'}
     formats = {
         'behavioral':'Shape SPOKEN as a concise STAR story when candidate evidence supports it. Keep it conversational and never invent a story.',
@@ -60,7 +64,7 @@ class RingConversation:
             return
         payload = {'model':model,'messages':[{'role':'system','content':prompt(style, instructions)}]+list(self.history)+[{'role':'user','content':question}],
                    'stream':True,'store':False,'reasoning_effort':'low' if model=='gpt-6-astra' else 'none',
-                   'max_completion_tokens':2048 if model=='gpt-6-astra' else (700 if style=='detailed' else 480)}
+                   'max_completion_tokens':2048 if model=='gpt-6-astra' else (900 if style=='detailed' else 750)}
         if model in ('gpt-5.6-sol','gpt-6-astra'): payload['service_tier']='fast'
         request=urllib.request.Request('https://api.openai.com/v1/chat/completions',data=json.dumps(payload).encode(),
                    headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'})
