@@ -63,7 +63,7 @@ def handle(environ, start_response, credentials, conversation, model):
     if not hmac.compare_digest(environ.get('HTTP_AUTHORIZATION',''),'Bearer '+credentials['bridge_token']):
         return reply('401 Unauthorized', {'error':'Enter the bridge token already used by your Even AI agent.'})
     if path == '/api/health' and method == 'GET':
-        return reply('200 OK', {'configured': bool(credentials.get('api_key')), 'model':model, 'profile_loaded':ring_agent.bridge.EXPERIENCE.exists(), 'version':'0.7.1', 'answer_style':'natural-question-aware-v1', 'reasoning':'low', 'max_recording_seconds':300})
+        return reply('200 OK', {'configured': bool(credentials.get('api_key')), 'model':model, 'fast_code_model':'gpt-5.6-sol', 'profile_loaded':ring_agent.bridge.EXPERIENCE.exists(), 'version':'0.7.2', 'answer_style':'natural-question-aware-v1', 'reasoning':'low', 'max_recording_seconds':300})
     if path != '/api/ask': return reply('404 Not Found', {'error':'Not found'})
     if method != 'POST': return reply('405 Method Not Allowed', {'error':'POST required'})
     if environ.get('CONTENT_TYPE','').split(';')[0] != 'application/octet-stream':

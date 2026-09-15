@@ -39,11 +39,25 @@ class StreamTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             profile=Path(folder)/'profile.md';profile.write_text('Verified note: QFC uses Snowflake and TIDAL.')
             with patch.object(ring_agent.bridge,'EXPERIENCE',profile):
-                prompt=ring_agent.prompt('natural')
-                self.assertIn(profile.read_text(),prompt);self.assertIn('Return ONE answer',prompt);self.assertIn('START with actual runnable code',prompt)
+                prompt=ring_agent.prompt('natural',question='Tell me about QFC.')
+                self.assertIn(profile.read_text(),prompt);self.assertIn('Give one natural',prompt);self.assertIn('start with runnable fenced code',prompt)
                 self.assertNotIn('Reply with one to three short bullet points',prompt)
     def test_custom_request_and_format_are_added_to_prompt(self):
         prompt=ring_agent.prompt('technical','Explain the trade-off for a beginner.')
         self.assertIn('correctness',prompt)
         self.assertIn('<user_answer_request>\nExplain the trade-off for a beginner.',prompt)
+    def test_relevant_profile_context_is_selected(self):
+        profile='''# Candidate\n\nCore stack.\n\nCurrent role.\n\n### Priceline: platform\nPriceline detail.\n\n### Mizuho: reporting\nMizuho detail.'''
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'profile.md';path.write_text(profile)
+            with patch.object(ring_agent.bridge,'EXPERIENCE',path):
+                selected=ring_agent.background_for('Explain the Priceline website pipeline')
+                self.assertIn('Core stack',selected);self.assertIn('Priceline detail',selected);self.assertNotIn('Mizuho detail',selected)
+    def test_code_requests_use_fast_model_but_scenarios_keep_astra(self):
+        self.assertEqual(ring_agent.fast_model('Give me the SQL','gpt-6-astra'),'gpt-5.6-sol')
+        self.assertEqual(ring_agent.fast_model('Write BigQuery SQL to keep the latest row','gpt-6-astra'),'gpt-5.6-sol')
+        self.assertEqual(ring_agent.fast_model('Explain the architecture','gpt-6-astra'),'gpt-6-astra')
+        with patch.object(ring_agent.urllib.request,'urlopen',return_value=stream_bytes(['SELECT 1'])) as call:
+            list(ring_agent.RingConversation().stream('Write SQL query','gpt-6-astra','fake'))
+            self.assertEqual(json.loads(call.call_args.args[0].data)['model'],'gpt-5.6-sol')
 if __name__=='__main__':unittest.main()
