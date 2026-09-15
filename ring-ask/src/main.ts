@@ -24,7 +24,7 @@ function restore(raw:any){
 }
 let saved=[];
 try{restore(JSON.parse(localStorage.getItem('ring-ask-settings')||'{}'));saved=JSON.parse(localStorage.getItem('ring-ask-history')||'[]');
- if(!saved.length){const old=JSON.parse(localStorage.getItem('ring-ask-answer')||'{}');if(old.answer)saved=[{question:old.question||'',answer:old.spokenAnswer||old.answer,time:Date.now()}];}}
+ if(!saved.length){const old=JSON.parse(localStorage.getItem('ring-ask-answer')||'{}');if(old.answer&&old.question?.trim())saved=[{question:old.question||'',answer:old.spokenAnswer||old.answer,time:Date.now()}];}}
 catch{restore({});}
 const history=new AnswerHistory(saved);
 function persist(){try{localStorage.setItem('ring-ask-history',JSON.stringify(history.entries));}catch{el('hint').textContent='Phone storage is full; history is kept for this session only.';}}

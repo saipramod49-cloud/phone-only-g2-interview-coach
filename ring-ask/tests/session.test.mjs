@@ -44,3 +44,10 @@ test('code indentation, blank lines and tokens survive wrapping across pages',()
  assert.equal(wrapped.join('\n'),code);
 });
 test('audio-only envelopes never imply a tap',()=>assert.deepEqual(inputGestures({audioEvent:{audioPcm:[]}}),[]));
+
+test('history ignores obsolete startup instructions and tolerates corrupt storage',()=>{
+ assert.equal(new AnswerHistory({}).entries.length,0);
+ const history=new AnswerHistory([{question:'',answer:'Tap to record a question. Double-tap to finish.'},{question:'What is SQL?',answer:'A query language.'}]);
+ assert.equal(history.entries.length,1);
+ assert.equal(history.current.question,'What is SQL?');
+});

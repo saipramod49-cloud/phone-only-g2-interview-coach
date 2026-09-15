@@ -3,9 +3,10 @@ import ts from 'typescript';
 import * as controller from '../src/controller.mjs';import * as session from '../src/session.mjs';import * as reader from '../src/reader.mjs';
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function element(){return {value:'',textContent:'',disabled:false,open:false,checked:false,children:[],style:{},classList:{toggle(){}},replaceChildren(){this.children=[];},append(n){this.children.push(n);},setPointerCapture(){}};}
-async function app(mode='tap'){
+async function app(mode='tap',prior){
  const ids=new Map([...fs.readFileSync(new URL('../index.html',import.meta.url),'utf8').matchAll(/id="([^"]+)"/g)].map(m=>[m[1],element()]));
  const storage=new Map([['ring-ask-settings',JSON.stringify({token:'test',backend:'https://test.invalid',listenMode:mode,reading:{font:'native',rows:10,words:'auto'}})],['ring-ask-history',JSON.stringify([{question:'Old question?',answer:'Old answer kept safe.',time:1}])]]);
+ if(prior){storage.delete('ring-ask-history');storage.set('ring-ask-answer',JSON.stringify(prior));}
  const mic=[],requests=[],pages=[],timeouts=new Set(),intervals=new Set();let eventHandler;
  const bridge={audioControl:async on=>{mic.push(on);return true;},onEvenHubEvent:f=>eventHandler=f,onDeviceStatusChanged(){},getLocalStorage:async()=>'',setLocalStorage:async()=>true,createStartUpPageContainer:async p=>{pages.push(p);return 0;},rebuildPageContainer:async p=>{pages.push(p);return true;},textContainerUpgrade:async()=>true};
  class Model{constructor(p){Object.assign(this,p);}}
@@ -68,4 +69,13 @@ test('app menu foreground return rebuilds the lens and both layouts use question
   a.ids.get('answer-layout').value='side';a.ids.get('answer-layout').onchange();await delay(150);
   const p=a.pages.at(-1);assert.equal(p.textObject[1].containerName,'question');assert.equal(p.textObject[2].containerName,'answer');assert.ok(p.textObject[2].xPosition>p.textObject[1].xPosition);
  }finally{a.dispose();}
+});
+
+test('app migration drops old startup text but restores completed question answers',async()=>{
+ for(const prior of [{answer:'Tap to record a question. Double-tap to finish.'},{question:'Real question?',answer:'Real answer.'}]){
+  const a=await app('tap',prior);try{
+   assert.equal(a.ids.get('question').textContent,prior.question||'Ready for your question');
+   assert.ok(!a.ids.get('display').children.map(n=>n.textContent).join('').includes('Double-tap to finish'));
+  }finally{a.dispose();}
+ }
 });

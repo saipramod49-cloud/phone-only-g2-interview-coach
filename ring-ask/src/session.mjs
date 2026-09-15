@@ -1,5 +1,5 @@
 export class AnswerHistory {
-  constructor(saved = []) { this.entries = (Array.isArray(saved)?saved:[]).filter(e=>e && typeof e.answer==='string' && e.answer).slice(-30); this.index=this.entries.length-1; this.page=0; }
+  constructor(saved = []) { this.entries = (Array.isArray(saved)?saved:[]).filter(e=>e && typeof e.answer==='string' && e.answer && !(!e.question && /^(Tap to record a question|Choose a listening mode|Ready for your)/.test(e.answer))).slice(-30); this.index=this.entries.length-1; this.page=0; }
   get current(){return this.entries[this.index];}
   get isLatest(){return this.index===this.entries.length-1;}
   add(question,answer){this.entries.push({question,answer,time:Date.now()});this.entries=this.entries.slice(-30);this.index=this.entries.length-1;this.page=0;}
