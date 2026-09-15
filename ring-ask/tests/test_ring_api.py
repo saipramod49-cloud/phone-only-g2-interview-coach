@@ -17,11 +17,16 @@ class RingTests(unittest.TestCase):
         env.update(extra or {})
         response=ring_api.handle(env,lambda s,h:status.append(s),{'bridge_token':'test','api_key':'fake'},Conversation(),'gpt-5.6-sol')
         return status,b''.join(response) if response is not None else None
+    def test_full_five_minute_audio_is_accepted(self):
+        with patch.object(ring_api,'transcribe',return_value='Explain the architecture'), patch.object(ring_api.ring_agent.conversation,'stream',return_value=iter([{'type':'delta','text':'Complete answer'},{'type':'done'}])):
+            status,body=self.call(body=b'\0'*9600000)
+            self.assertEqual(status,['200 OK']);self.assertIn(b'Complete answer',body)
+        self.assertEqual(len(ring_api.wav_file(b'\0'*9600000)),9600044)
     def test_bad_token(self):
         with patch.object(ring_api,'transcribe') as transcribe:
             status,_=self.call(auth='Bearer wrong');self.assertIn('401',status[0]);transcribe.assert_not_called()
     def test_invalid_audio(self):
-        for body in [b'',b'1'*6401,b'1'*2880002]:
+        for body in [b'',b'1'*6401,b'1'*9600002]:
             status,_=self.call(body=body);self.assertIn('400',status[0])
     def test_submission_streams_full_ring_answer(self):
         with patch.object(ring_api,'transcribe',return_value='What is a data warehouse?'), patch.object(ring_api.ring_agent.conversation,'stream',return_value=iter([{'type':'delta','text':'A store for analytical data.'},{'type':'delta','text':' More detail.'},{'type':'done'}])):

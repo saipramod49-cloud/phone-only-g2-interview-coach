@@ -18,7 +18,7 @@ ROOT = Path(__file__).parent / 'ring-ui'
 _busy = threading.Lock()
 
 def wav_file(pcm):
-    if not 6400 <= len(pcm) <= 2880000 or len(pcm) % 2:
+    if not 6400 <= len(pcm) <= 9600000 or len(pcm) % 2:
         raise ValueError('Invalid PCM length')
     output = io.BytesIO()
     with wave.open(output, 'wb') as writer:
@@ -34,7 +34,7 @@ def transcribe(pcm, key):
                'Content-Type: audio/wav\r\n\r\n').encode() + wav_file(pcm) + f'\r\n--{boundary}--\r\n'.encode()
     request = urllib.request.Request('https://api.openai.com/v1/audio/transcriptions', data=payload,
         headers={'Authorization':'Bearer '+key, 'Content-Type':'multipart/form-data; boundary='+boundary})
-    with urllib.request.urlopen(request, timeout=35) as response:
+    with urllib.request.urlopen(request, timeout=60) as response:
         result = json.load(response)
     text = result.get('text', '').strip()
     if not text: raise ValueError('No speech detected. Please try again.')
@@ -63,15 +63,15 @@ def handle(environ, start_response, credentials, conversation, model):
     if not hmac.compare_digest(environ.get('HTTP_AUTHORIZATION',''),'Bearer '+credentials['bridge_token']):
         return reply('401 Unauthorized', {'error':'Enter the bridge token already used by your Even AI agent.'})
     if path == '/api/health' and method == 'GET':
-        return reply('200 OK', {'configured': bool(credentials.get('api_key')), 'model':model, 'profile_loaded':ring_agent.bridge.EXPERIENCE.exists(), 'version':'0.6.2', 'answer_style':'spoken-flow-keywords-v2'})
+        return reply('200 OK', {'configured': bool(credentials.get('api_key')), 'model':model, 'profile_loaded':ring_agent.bridge.EXPERIENCE.exists(), 'version':'0.7.0', 'answer_style':'natural-question-aware-v1', 'reasoning':'low', 'max_recording_seconds':300})
     if path != '/api/ask': return reply('404 Not Found', {'error':'Not found'})
     if method != 'POST': return reply('405 Method Not Allowed', {'error':'POST required'})
     if environ.get('CONTENT_TYPE','').split(';')[0] != 'application/octet-stream':
         return reply('415 Unsupported Media Type', {'error':'Expected PCM audio.'})
     try:
         size = int(environ.get('CONTENT_LENGTH','0'))
-        if not 6400 <= size <= 2880000 or size % 2: raise ValueError()
-    except (TypeError,ValueError): return reply('400 Bad Request', {'error':'Record between 0.2 and 90 seconds.'})
+        if not 6400 <= size <= 9600000 or size % 2: raise ValueError()
+    except (TypeError,ValueError): return reply('400 Bad Request', {'error':'Record between 0.2 and 300 seconds.'})
     try:
         pcm = environ['wsgi.input'].read(size)
         if len(pcm) != size: raise ValueError('Incomplete audio')

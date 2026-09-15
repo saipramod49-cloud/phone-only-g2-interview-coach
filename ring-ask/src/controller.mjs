@@ -1,3 +1,4 @@
+export {inputGestures as gestures} from './session.mjs';
 export const MAX_BYTES = 16000 * 2 * 300;
 export function pages(text, columns = 40, rows = 6) {
   const lines = [];
@@ -20,7 +21,7 @@ export function gesture(event) {
   const input = event.textEvent ?? event.listEvent;
   return input ? input.eventType ?? 0 : null;
 }
-export function gestures(event) {
+export function oldGestures(event) {
   const values = [event.textEvent?.eventType, event.listEvent?.eventType];
   if ([0,1,2,3,9,10].includes(event.sysEvent?.eventType)) values.push(event.sysEvent.eventType);
   return [...new Set(values.filter(value => value != null))];

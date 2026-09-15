@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Ring Ask</title>  <script type="module" crossorigin src="./assets/index-SeVG0S-U.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CAacZzHx.css">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Ring Ask</title>  <script type="module" crossorigin src="./assets/index-CPJzQUfW.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-C0GHtsqn.css">
 </head>
 <body><main id="phone-scroll">
-  <header><span class="eyebrow">RING ASK · v0.6.4</span><span id="connection">Connecting glasses…</span></header>
+  <header><span class="eyebrow">RING ASK · v0.7.0</span><span id="connection">Connecting glasses…</span></header>
   <h1>Tap. Ask. Read.</h1>
-  <p>Choose tap-to-toggle or hold-to-talk below. Recording can continue for up to five minutes.</p>
+  <p>Choose tap-to-toggle or hold-to-talk below. Recording can continue for up to five minutes. Double tap changes page; swipe up/down browses answer history.</p>
   <nav class="quick-links" aria-label="Ring Ask links">
     <a class="primary-link" href="https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask">Open Ring Ask in Even Hub</a>
     <a href="https://phone-only-g2-interview-coach-fawf.onrender.com/ring/">Live Render deployment</a>
@@ -17,19 +17,20 @@
     <label>Bridge token<input id="token" type="password" autocomplete="off"></label>
     <button id="save">Save & check connection</button><p id="health" role="status">Your connection will be remembered.</p>
   </details>
-  <section class="lens"><div class="lens-top"><span id="status">Ready</span><span id="page"></span></div><pre id="display"></pre></section>
-  <p id="question"></p><p id="timing" role="status"></p>
+  <section class="lens"><div class="lens-top"><span id="status">Ready</span><span id="page"></span></div><div id="qa-panels"><p id="question"></p><pre id="display"></pre></div></section>
+  <p id="timing" role="status"></p>
   <div class="controls"><button id="start">Press and hold to speak</button><button id="stop">Stop & answer</button><button id="cancel">Cancel</button></div>
-  <div class="controls secondary"><button id="up">↑ Previous page</button><button id="down">Next page ↓</button><button id="view">Next: flow</button></div>
+  <div class="controls secondary"><button id="up">↑ Previous answer</button><button id="down">Newer answer ↓</button></div>
+  <div class="controls secondary"><button id="previous-page">Previous page</button><button id="next-page">Next page · double tap</button></div>
   <details id="answer-preferences" open><summary>Listening & answer settings</summary>
     <label>Listening control<select id="listen-mode"><option value="tap">Tap to start · tap to stop</option><option value="hold">Hold through question · release to answer</option></select></label>
-    <label>Answer format<select id="answer-style"><option value="natural">Balanced · concise and natural</option><option value="brief">Very short · direct points</option><option value="behavioral">Behavioral · STAR story</option><option value="technical">Technical · explain decisions</option><option value="architecture">Scenario · architecture approach</option></select></label>
+    <label>Question position<select id="answer-layout"><option value="top">Question above · answer below</option><option value="side">Question left · answer right</option></select></label>
     <label>Request for the next answer<textarea id="answer-instructions" rows="4" maxlength="800" placeholder="Example: Explain it for someone with limited experience. Use a simple example and emphasize the trade-off."></textarea></label>
     <label class="check"><input id="keep-instructions" type="checkbox"> Keep this request for every answer</label>
-    <button id="apply-instructions">Apply to next answer</button><p id="instruction-status">Balanced format is active.</p>
+    <button id="apply-instructions">Apply to next answer</button><p id="instruction-status">One natural answer, adapted to your question.</p>
   </details>
   <details open><summary>Reading box & text</summary>
-    <div id="geometry"><div id="geometry-box">answer area</div></div>
+
     <div class="settings-grid">
       <label>Font size<select id="font"><option value="native">Native · fastest</option><option value="18">18 px</option><option value="22">22 px</option><option value="26">26 px</option><option value="30">30 px</option></select></label>
       <label>Visible lines<select id="rows"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
@@ -41,6 +42,6 @@
     <button id="reset-reading">Reset to full screen</button><p id="reading-note"></p>
   </details>
   <button id="demo">Preview a sample answer</button>
-  <details><summary>Complete answer on phone</summary><p id="full-answer"></p></details>
+  <details><summary>Complete answer on phone</summary><div id="full-answer"></div></details>
   <details><summary>Connection & recovery</summary><p id="hint" role="status"></p><p id="input-status">No ring inputs yet.</p><div class="controls secondary"><button id="retry">Retry last question</button><button id="reconnect">Reconnect now</button><button id="exit">Exit glasses app</button></div><p>Keep Ring Ask open in Even Hub. It reconnects automatically after a drop. Retry resends the last submitted audio.</p></details>
 </main></body></html>

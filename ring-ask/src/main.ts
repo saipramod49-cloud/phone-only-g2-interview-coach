@@ -1,213 +1,206 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,MenuContainerProperty,MenuItemProperty,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
-import {Recorder,gestures,controlAction,recoveryDelay} from './controller.mjs';
-import {fullPage,readingSettings,readingLayout,deadline,emphasisParts} from './reader.mjs';
+import {Recorder,gestures,recoveryDelay} from './controller.mjs';
+import {readingSettings,deadline,textWidth,emphasisParts} from './reader.mjs';
+import {AnswerHistory,RingInput,readingFrame} from './session.mjs';
+import {BitmapDisplay,imageContainers,measureFont} from './bitmap';
 import './style.css';
-import {bitmapPage,imageContainers,BitmapDisplay} from './bitmap';
-import {answerVariants,pairedViews} from './views.mjs';
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
 const backend=el<HTMLInputElement>('backend'),token=el<HTMLInputElement>('token');
-let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,connecting=false,recoveryAttempts=0,pendingListen=false;
-let reading=readingSettings(),layoutDirty=false;const bitmap=new BitmapDisplay();
-type AnswerView='flow'|'spoken'|'keywords';
-let status='Ready',answer='',spokenAnswer='',flowAnswer='',explainAnswer='',keywordsAnswer='',rawAnswer='',viewMode:AnswerView='spoken',offset=0;
-let listenMode='tap',answerStyle='natural',answerInstructions='',keepInstructions=false;
-let abort:AbortController|undefined,retryAudio:Uint8Array|undefined;
-let recovering:ReturnType<typeof setTimeout>|undefined,paintTimer:ReturnType<typeof setTimeout>|undefined,painting=false,dirty=false;
-let lastAudioAt=0,lastPaintedAnswer:string|undefined;
-let inputCount=0,touched=false,apiReady=false,checking=false,questionText='',questionStart=0,firstText=0;
-let pendingViewAdvance=false;
-function restore(raw:any) {backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);if(raw.nativeLayoutVersion!==3&&reading.font==='native')reading=readingSettings({...reading,rows:10,words:'auto',width:576,x:50,y:50});for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);listenMode=raw.listenMode==='hold'?'hold':'tap';el<HTMLSelectElement>('listen-mode').value=listenMode;answerStyle=raw.answerStyle||'natural';answerInstructions=raw.answerInstructions||'';keepInstructions=!!raw.keepInstructions;el<HTMLSelectElement>('answer-style').value=answerStyle;el<HTMLTextAreaElement>('answer-instructions').value=answerInstructions;el<HTMLInputElement>('keep-instructions').checked=keepInstructions;}
-try {restore(JSON.parse(localStorage.getItem('ring-ask-settings')||'{}'));const old=JSON.parse(localStorage.getItem('ring-ask-answer')||'{}');if(old.answer){spokenAnswer=old.spokenAnswer||'';flowAnswer=old.flowAnswer||old.answer;explainAnswer=old.explainAnswer||'';keywordsAnswer=old.keywordsAnswer||'';viewMode=['flow','spoken','keywords'].includes(old.viewMode)?old.viewMode:'flow';answer=viewMode==='flow'?flowAnswer:viewMode==='spoken'?spokenAnswer:keywordsAnswer;if(!answer){viewMode='flow';answer=flowAnswer;}offset=0;status='Saved answer · '+viewMode.toUpperCase();questionText=old.question||'';}}
+let reading=readingSettings(),listenMode='tap',answerLayout='top',answerInstructions='',keepInstructions=false;
+let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,backgrounded=false,connecting=false,touched=false;
+let recoveryAttempts=0,status='Ready',recordStarted=0,lastAudioAt=0,inputCount=0;
+let layoutDirty=false,painting=false,dirty=false,lastPaint='',checking=false,apiReady=false;
+let paintTimer:ReturnType<typeof setTimeout>|undefined,recovering:ReturnType<typeof setTimeout>|undefined;
+let abort:AbortController|undefined,retryAudio:Uint8Array|undefined,requestSerial=0;
+let draft:{question:string,answer:string}|undefined,showDraft=false;
+const bitmap=new BitmapDisplay();
+function restore(raw:any){
+ backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);
+ listenMode=raw.listenMode==='hold'?'hold':'tap';answerLayout=raw.answerLayout==='side'?'side':'top';
+ answerInstructions=raw.answerInstructions||'';keepInstructions=!!raw.keepInstructions;
+ for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);
+ el<HTMLSelectElement>('listen-mode').value=listenMode;el<HTMLSelectElement>('answer-layout').value=answerLayout;
+ el<HTMLTextAreaElement>('answer-instructions').value=answerInstructions;el<HTMLInputElement>('keep-instructions').checked=keepInstructions;
+}
+let saved=[];
+try{restore(JSON.parse(localStorage.getItem('ring-ask-settings')||'{}'));saved=JSON.parse(localStorage.getItem('ring-ask-history')||'[]');
+ if(!saved.length){const old=JSON.parse(localStorage.getItem('ring-ask-answer')||'{}');if(old.answer)saved=[{question:old.question||'',answer:old.spokenAnswer||old.answer,time:Date.now()}];}}
 catch{restore({});}
+const history=new AnswerHistory(saved);
+function persist(){try{localStorage.setItem('ring-ask-history',JSON.stringify(history.entries));}catch{el('hint').textContent='Phone storage is full; history is kept for this session only.';}}
 const recorder=new Recorder(async(on:boolean)=>{
-  if(on && (!bridge || !screenReady)) {scheduleRecovery();throw new Error('Glasses reconnecting. Wait for Ready, then tap again.');}
-  if(!bridge)return true;
-  try {return await deadline(bridge.audioControl(on,AudioInputSource.Glasses),6500,'Microphone connection timed out. Reconnecting…');}
-  catch(error){screenReady=false;scheduleRecovery();throw error;}
-},(message:string|null)=>{if(message){status=message;if(message==='Listening'){lastAudioAt=Date.now();}}render();},submit);
+ if(on&&(!bridge||!screenReady||backgrounded))throw new Error('Glasses reconnecting. Wait for Connected and try again.');
+ if(!bridge)return true;
+ try{return await deadline(bridge.audioControl(on,AudioInputSource.Glasses),6500,'Microphone timed out. Try reconnecting.');}
+ catch(error){screenReady=false;scheduleRecovery();throw error;}
+},(message:string|null)=>{
+ if(message){status=message;if(message==='Listening'){recordStarted=Date.now();lastAudioAt=Date.now();}}
+ if(recorder.state==='ready')recordStarted=0;render();
+},submit);
 recorder.mode=listenMode;
-function saveAnswer(){try{localStorage.setItem('ring-ask-answer',JSON.stringify({answer,spokenAnswer,flowAnswer,explainAnswer,keywordsAnswer,viewMode,offset,question:questionText}));}catch{}}
-function selectView(next:AnswerView){const wasSplit=viewMode==='flow';const content={flow:flowAnswer,spoken:spokenAnswer,keywords:keywordsAnswer}[next];if(!content)return;viewMode=next;answer=content;offset=0;if(wasSplit!==(next==='flow'))layoutDirty=true;const position={spoken:1,flow:2,keywords:3}[viewMode];status=`Answer ${position}/3 · ${viewMode.toUpperCase()}`;render();saveAnswer();}
-function toggleView(){const order:AnswerView[]=['spoken','flow','keywords'];for(let step=1;step<=order.length;step++){const next=order[(order.indexOf(viewMode)+step)%order.length];if({flow:flowAnswer,spoken:spokenAnswer,keywords:keywordsAnswer}[next]){selectView(next);return;}}}
-async function saveSettings(){
-  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading,nativeLayoutVersion:3,listenMode,answerStyle,answerInstructions,keepInstructions});
-  let saved=false;try{localStorage.setItem('ring-ask-settings',raw);saved=true;}catch{}
-  if(bridge)try{await deadline(bridge.setLocalStorage('ring-ask-settings',raw),2500);saved=true;}catch{}
-  return saved;
+const ringInput=new RingInput(dispatch);
+function captureStatus(){
+ if(recorder.state==='listening'){const secs=Math.floor((Date.now()-recordStarted)/1000);return `Listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')} · ${listenMode==='tap'?'tap to stop':'release to answer'}`;}
+ return status;
 }
-function answerPage(text:string,index:number){return reading.font==='native'?fullPage(text,index,reading):bitmapPage(text,index,reading);}
-function pairs(){return pairedViews(flowAnswer,explainAnswer);}
-function splitPair(){const list=pairs(),page=Math.max(0,Math.min(offset,list.length-1));offset=page;return {item:list[page],page,count:Math.max(1,list.length),rows:reading.rows};}
-function lensContent(){
- if(['starting','listening','stopping'].includes(recorder.state))return status+'\n\nKeep holding while speaking. Release to answer.';
- if(viewMode==='flow'&&pairs().length){const p=splitPair().item;return `${p.flow}\n---\n${p.explanation}`;}
- return answer?answerPage(answer,offset).text:status+'\n\nTap to listen. Hold while speaking. Release to answer.\nSwipe down for the next page.';
-}
-function ringMenu(){return new MenuContainerProperty({menuItems:listenMode==='hold'?[]:[new MenuItemProperty({itemName:'Resume Ring Ask',itemID:1}),new MenuItemProperty({itemName:'Start listening',itemID:2})]});}
-function pageDefinition(){
- const custom=reading.font!=='native',box=readingLayout(reading),split=viewMode==='flow'&&pairs().length>0&&!custom;
- if(split){const p=splitPair().item,half=Math.floor((box.width-8)/2);return {containerTotalNum:2,menuObject:ringMenu(),textObject:[
-  new TextContainerProperty({containerID:1,containerName:'flow',xPosition:box.x,yPosition:box.y,width:half,height:box.height,paddingLength:3,borderWidth:1,borderColor:15,isEventCapture:1,content:p.flow}),
-  new TextContainerProperty({containerID:2,containerName:'explain',xPosition:box.x+half+8,yPosition:box.y,width:box.width-half-8,height:box.height,paddingLength:3,borderWidth:1,borderColor:15,isEventCapture:0,content:p.explanation})]};}
- return {containerTotalNum:custom?5:1,menuObject:ringMenu(),textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:custom?0:box.x,yPosition:custom?0:box.y,width:custom?576:box.width,height:custom?288:box.height,paddingLength:custom?0:3,borderWidth:1,borderColor:15,isEventCapture:1,content:custom?'':lensContent(),...(custom?{zOrderIndex:0}:{})})],...(custom?{imageObject:imageContainers()}:{})};
+function displayed(){return showDraft&&draft?.answer?draft:history.current;}
+function frame(){const f=readingFrame(displayed(),history.page,reading,(text:string)=>reading.font==='native'?textWidth(text):measureFont(text,reading.font),answerLayout,showDraft&&draft?.answer?'Current answer':history.label());history.page=f.page;return f;}
+function appendRich(target:HTMLElement,text:string){
+ target.replaceChildren();let code=false;
+ for(const line of text.split('\n')){
+  if(/^\s*```/.test(line)){code=!code;continue;}
+  const row=document.createElement('div');if(code){row.className='code-line';row.textContent=line||' ';}
+  else{for(const part of line.split(/(\*\*.*?\*\*)/g)){const n=document.createElement(part.startsWith('**')?'strong':'span');n.textContent=part.startsWith('**')?part.slice(2,-2):part;row.append(n);}}
+  target.append(row);
+ }
 }
 function render(){
- const f=viewMode==='flow'&&pairs().length?splitPair():answerPage(answer,offset);offset=f.page;
- el('status').textContent=status;el('page').textContent=`Page ${f.page+1} / ${f.count}`;el('display').replaceChildren();for(const part of emphasisParts(lensContent())){const node=document.createElement(part.bold?'strong':'span');node.textContent=part.text;el('display').append(node);}
- el('reading-note').textContent=`${f.rows} lines fit per page · ${reading.words==='auto'?'automatic full-width wrapping':`up to ${reading.words} words per line`}${reading.font==='native'?'':'. Custom font may update more slowly on glasses.'}`;
- const box=readingLayout(reading),preview=el('geometry-box');preview.style.width=`${box.width/5.76}%`;preview.style.height=`${box.height/2.88}%`;preview.style.left=`${box.x/5.76}%`;preview.style.top=`${box.y/2.88}%`;
- el('display').style.fontSize=reading.font==='native'?'':`${reading.font}px`;
- el('full-answer').textContent=(spokenAnswer?'SPOKEN VIEW\n'+spokenAnswer:'')+(flowAnswer?'\n\nFLOW VIEW\n'+flowAnswer:'')+(explainAnswer?'\n\nEXPLANATIONS\n'+explainAnswer:'')+(keywordsAnswer?'\n\nKEYWORDS\n'+keywordsAnswer:'');const labels={spoken:'Next: flow',flow:'Next: keywords',keywords:'Next: spoken'};el<HTMLButtonElement>('view').textContent=labels[viewMode];el<HTMLButtonElement>('view').disabled=![flowAnswer,spokenAnswer,keywordsAnswer].filter(Boolean).length;el('question').textContent=questionText?`Heard: ${questionText}`:'';
- el<HTMLButtonElement>('start').disabled=recorder.state==='busy';el<HTMLButtonElement>('start').textContent=listenMode==='hold'?'Press and hold to speak':recorder.state==='listening'?'Tap to stop & answer':'Tap to start listening';
+ const f=frame();el('status').textContent=captureStatus();el('page').textContent=f.header;
+ el('question').textContent=displayed()?.question||'Ready for your question';el('display').replaceChildren();for(const part of emphasisParts(f.answer)){const node=document.createElement(part.bold?'strong':'span');node.textContent=part.text;el('display').append(node);}
+ el('qa-panels').classList.toggle('side',answerLayout==='side');appendRich(el('full-answer'),displayed()?.answer||'');
+ el('reading-note').textContent=`${f.rows} answer lines per page. Long questions are shortened on the lens; the complete question is shown on this phone.`;
+ el<HTMLButtonElement>('start').textContent=listenMode==='hold'?'Hold to listen':'Tap to '+(['starting','listening'].includes(recorder.state)?'stop & answer':'start listening');
+ el<HTMLButtonElement>('start').disabled=['busy','stopping'].includes(recorder.state);
  el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
- el<HTMLButtonElement>('up').disabled=offset===0;el<HTMLButtonElement>('down').disabled=offset>=f.count-1;
+ el<HTMLButtonElement>('listen-mode').disabled=recorder.state!=='ready';
+ el<HTMLButtonElement>('up').disabled=history.index<=0;el<HTMLButtonElement>('down').disabled=history.isLatest&&!draft?.answer;
+ el<HTMLButtonElement>('previous-page').disabled=f.page===0;el<HTMLButtonElement>('next-page').disabled=f.count<=1;
  el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';
- dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},reading.font==='native'?80:250);
+ dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},reading.font==='native'?100:350);
 }
+function ringMenu(){return new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:'Resume Ring Ask',itemID:1}),new MenuItemProperty({itemName:'Previous answer',itemID:2}),new MenuItemProperty({itemName:'Current answer',itemID:3})]});}
+function pageDefinition(){
+ const f=frame(),custom=reading.font!=='native';
+ if(custom)return {containerTotalNum:5,menuObject:ringMenu(),textObject:[new TextContainerProperty({containerID:1,containerName:'input',xPosition:0,yPosition:0,width:576,height:288,paddingLength:0,isEventCapture:1,content:'',zOrderIndex:0})],imageObject:imageContainers()};
+ return {containerTotalNum:3,menuObject:ringMenu(),textObject:[
+  new TextContainerProperty({containerID:1,containerName:'header',xPosition:0,yPosition:0,width:576,height:32,paddingLength:2,isEventCapture:1,content:header(f)}),
+  ...f.panels.map((p:any,i:number)=>new TextContainerProperty({containerID:i+2,containerName:i?'answer':'question',xPosition:p.x,yPosition:p.y,width:p.width,height:p.height,paddingLength:3,borderWidth:1,borderColor:15,isEventCapture:0,content:p.text}))]};
+}
+function header(f:any){return ['starting','listening','stopping'].includes(recorder.state)?`${captureStatus()} · ${f.page+1}/${f.count}`:f.header;}
 async function paint(){
-  if(painting||!bridge||!screenReady||!active)return;
-  painting=true;
-  try{
-    // Coalesce updates: never build up a queue while BLE is slow or disconnected.
-    while(dirty&&screenReady&&active){
-      dirty=false;
-      if(layoutDirty){layoutDirty=false;const ok=await deadline(bridge.rebuildPageContainer(new RebuildPageContainer(pageDefinition())),6000);if(!ok)throw new Error('Display rebuild failed');bitmap.reset();lastPaintedAnswer=undefined;}
-      const content=lensContent();
-      if(content!==lastPaintedAnswer){
-        if(reading.font!=='native'){if(viewMode==='flow'&&pairs().length){const p=splitPair().item;await bitmap.paintSplit(bridge,p.flow,p.explanation,reading.font,reading);}else await bitmap.paint(bridge,content,reading.font,reading);}else if(viewMode==='flow'&&pairs().length){
-        const p=splitPair().item;const results=await Promise.all([
-          deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:1,containerName:'flow',content:p.flow,contentOffset:0,contentLength:0})),5000),
-          deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:2,containerName:'explain',content:p.explanation,contentOffset:0,contentLength:0})),5000)]);
-        if(results.some(ok=>!ok))throw new Error('Display update failed');
-        }else{
-        const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:1,containerName:'answer',content,contentOffset:0,contentLength:0})),5000);
-        if(!ok)throw new Error('Display update failed');}
-        lastPaintedAnswer=content;
-      }
-
-    }
-  }catch{screenReady=false;el('connection').textContent='Glasses reconnecting…';scheduleRecovery();}
-  finally{painting=false;}
+ if(painting||!bridge||!screenReady||!active||backgrounded)return;painting=true;
+ try{while(dirty&&screenReady&&active&&!backgrounded){dirty=false;
+  if(layoutDirty){layoutDirty=false;const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer(pageDefinition())),6000);if(!ok)throw Error('Display rebuild failed');lastPaint='';bitmap.reset();}
+  const f=frame(),key=JSON.stringify([f,header(f)]);if(key===lastPaint)continue;
+  if(reading.font!=='native')await bitmap.paintFrame(bridge,{...f,header:header(f)},reading.font);
+  else for(const [id,name,content] of [[1,'header',header(f)],[2,'question',f.question],[3,'answer',f.answer]] as const){
+   const ok=await deadline(bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:id,containerName:name,content,contentOffset:0,contentLength:0})),5000);if(!ok)throw Error('Display update failed');}
+  lastPaint=key;
+ }}catch{screenReady=false;el('connection').textContent='Glasses reconnecting…';scheduleRecovery();}finally{painting=false;}
 }
-function scheduleRecovery(){
-  if(recovering||connecting||!active)return;
-  const delay=recoveryDelay(recoveryAttempts++);
-  recovering=setTimeout(()=>{recovering=undefined;void connect();},delay);
-}
+function scheduleRecovery(){if(recovering||connecting||!active||backgrounded)return;recovering=setTimeout(()=>{recovering=undefined;void connect();},recoveryDelay(recoveryAttempts++));}
 async function connect(){
-  if(connecting||!active)return;connecting=true;
-  try{
-    if(!bridge){bridge=await deadline(waitForEvenAppBridge(),8000,'Open through Even Hub to connect your glasses.');subscribe();
-      if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode=listenMode;}}catch{}
-    }
-    if(created){try{const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({...pageDefinition()})),6000);if(!ok)created=false;}catch{created=false;}}
-    if(!created) {const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer({...pageDefinition()})),6000);if(result!==0)throw new Error(`Glasses page unavailable (${result})`);created=true;}
-    bitmap.reset();layoutDirty=false;lastPaintedAnswer=undefined;screenReady=true;recoveryAttempts=0;el('connection').textContent='Glasses connected';el('hint').textContent='Tap, wait for Listening, then speak. Your last answer stays available after reconnecting.';render();
-    if(pendingListen&&recorder.state==='ready'&&token.value.trim()){
-      pendingListen=false;status='Starting microphone…';render();void recorder.dispatch(0);
-    }
-    if(token.value&&!apiReady)void checkConnection(false);
-  }catch(error){screenReady=false;el('connection').textContent='Glasses reconnecting…';el('hint').textContent=`${(error as Error).message} Retrying automatically.`;}
-  finally{connecting=false;if(!screenReady)scheduleRecovery();}
+ if(connecting||!active||backgrounded)return;connecting=true;
+ try{
+  if(!bridge){bridge=await deadline(waitForEvenAppBridge(),8000,'Open Ring Ask through Even Hub.');subscribe();
+   if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode=listenMode;}}catch{}}
+  if(created){try{created=!!await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer(pageDefinition())),6000);}catch{created=false;}}
+  if(!created){const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer(pageDefinition())),6000);if(result!==0)throw Error(`Glasses page unavailable (${result})`);created=true;}
+  screenReady=true;layoutDirty=false;recoveryAttempts=0;lastPaint='';bitmap.reset();el('connection').textContent='Glasses connected';render();
+  if(token.value&&!apiReady)void checkConnection(false);
+ }catch(error){screenReady=false;el('connection').textContent='Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
+ finally{connecting=false;if(!screenReady)scheduleRecovery();}
 }
+function suspend(closed=false){backgrounded=true;screenReady=false;if(closed)active=false;ringInput.reset();void recorder.dispatch(5);persist();}
+function resume(){active=true;backgrounded=false;recoveryAttempts=0;if(!screenReady)void connect();render();}
 function subscribe(){
-  bridge!.onEvenHubEvent(event=>{
-    if(event.audioEvent){lastAudioAt=Date.now();recorder.audio(event.audioEvent.audioPcm);}
-    const menuItem=event.menuItemClickEvent?.itemID;
-    if(menuItem===1){active=true;screenReady=false;recoveryAttempts=0;status='Resuming Ring Ask…';void connect();}
-    if(menuItem===2){active=true;screenReady=false;pendingListen=true;recoveryAttempts=0;status='Reconnecting · listening will start automatically';void connect();}
-    const systemType=event.sysEvent?.eventType;
-    if(systemType===4){active=true;recoveryAttempts=0;if(!screenReady)void connect();}
-    if(systemType===5){screenReady=false;void recorder.dispatch(5);saveAnswer();return;}
-    if(systemType!=null&&[6,7].includes(systemType)){active=false;pendingListen=false;screenReady=false;abort?.abort();void recorder.dispatch(5);saveAnswer();return;}
-    for(const rawType of gestures(event)){
-      const type=Number(rawType);
-      el('input-status').textContent=`Input ${++inputCount}: ${['tap','up','down','double tap'][type]||(type===9?'hold':'release')} · ${recorder.state}`;
-      dispatch(type);
-    }
-  });
-  bridge!.onDeviceStatusChanged(device=>{
-    if(device.isDisconnected()||device.isConnectionFailed()){
-      screenReady=false;void recorder.dispatch(5);el('connection').textContent='Device disconnected · reconnecting…';recoveryAttempts=0;scheduleRecovery();
-    }else if(device.isConnected()){recoveryAttempts=0;if(active&&!screenReady)void connect();}
-  });
+ bridge!.onEvenHubEvent(event=>{
+  if(event.audioEvent){lastAudioAt=Date.now();recorder.audio(event.audioEvent.audioPcm);}
+  const menu=event.menuItemClickEvent?.itemID;if(menu){resume();if(menu===2)navigateHistory(-1);if(menu===3){history.latest();showDraft=!!draft?.answer;render();}return;}
+  const system=event.sysEvent?.eventType;
+  if(system===4){resume();return;}if(system===5){suspend();return;}if(system===6||system===7){suspend(true);return;}
+  for(const type of gestures(event)){el('input-status').textContent=`Input ${++inputCount}: ${type} · ${recorder.state}`;ringInput.feed(type);}
+ });
+ bridge!.onDeviceStatusChanged(device=>{if(device.isDisconnected()||device.isConnectionFailed()){screenReady=false;ringInput.reset();void recorder.dispatch(5);scheduleRecovery();}else if(device.isConnected())resume();});
 }
-function scroll(direction:number){offset+=direction;render();saveAnswer();const f=viewMode==='flow'&&pairs().length?splitPair():answerPage(answer,offset);el('hint').textContent=`Page ${f.page+1} of ${f.count}${f.count===1?' · this answer fits on one page':''}`;}
+function navigatePage(direction:number){const f=frame();history.page=direction>0?(f.page+1)%f.count:Math.max(0,f.page-1);render();}
+function navigateHistory(direction:number){
+ if(showDraft&&draft?.answer&&direction<0){showDraft=false;history.latest();}
+ else if(direction>0&&history.isLatest&&draft?.answer){showDraft=true;history.page=0;}
+ else{showDraft=false;history.move(direction);}
+ render();
+}
 function dispatch(type:number){
- if(type===3&&answer&&!['starting','listening','stopping'].includes(recorder.state)){
-   if([flowAnswer,spokenAnswer,keywordsAnswer].filter(Boolean).length>1){pendingViewAdvance=false;toggleView();el('hint').textContent='Showing '+viewMode+' view. Swipe to change pages.';}
-   else{pendingViewAdvance=true;el('hint').textContent='Preparing the next answer view…';}
-   return;
- }
- const action=controlAction(type,active);
- if(action==='previous'||action==='next'){scroll(action==='previous'?-1:1);return;}
- if(action==='listen'){
-  if(recorder.state!=='ready'&&!(type===0&&listenMode==='tap'&&recorder.state==='listening'))return;
-  if(!token.value.trim()){status='Set up connection on phone';el('health').textContent='Enter your bridge token and save.';render();return;}
-  if(!screenReady){pendingListen=true;recoveryAttempts=0;void connect();status='Reconnecting · listening will start automatically';render();return;}
-  if(recorder.state==='ready')retryAudio=undefined;void recorder.dispatch(type);
- }else if(action==='answer'&&listenMode==='hold'&&['starting','listening'].includes(recorder.state))void recorder.dispatch(10);
- else if(action==='answer'&&pendingListen){pendingListen=false;status='Reconnecting · tap when Ready';render();}
+ if(!active||backgrounded)return;
+ if(type===3){navigatePage(1);return;}if(type===1||type===2){navigateHistory(type===1?-1:1);return;}
+ if(type===10){if(listenMode==='hold')void recorder.dispatch(10);return;}
+ if((listenMode==='tap'&&type!==0)||(listenMode==='hold'&&type!==9))return;
+ if(['busy','stopping'].includes(recorder.state))return;
+ if(!token.value.trim()){status='Enter your bridge token in Agent connection';render();return;}
+ if(!screenReady){status='Reconnecting · try again when Connected';void connect();render();return;}
+ recorder.mode=listenMode;void recorder.dispatch(type);
 }
+function cancel(){requestSerial++;abort?.abort();draft=undefined;showDraft=false;ringInput.reset();void recorder.dispatch(5);persist();render();}
 async function submit(pcm:Uint8Array){
-  retryAudio=pcm;abort?.abort();const current=new AbortController();abort=current;
-  const timeout=setTimeout(()=>current.abort(),95000);answer='';spokenAnswer='';flowAnswer='';explainAnswer='';keywordsAnswer='';rawAnswer='';viewMode='spoken';offset=0;pendingViewAdvance=false;questionText='';questionStart=performance.now();firstText=0;el('timing').textContent='Sending your question…';render();
-  try{
-    const requestInstructions=answerInstructions.trim();
-    const response=await fetch(backend.value.replace(/\/$/,'')+'/api/ask',{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:`Bearer ${token.value.trim()}`,'X-Answer-Style':answerStyle,'X-Answer-Instructions':encodeURIComponent(requestInstructions)},body:new Blob([new Uint8Array(pcm)]),signal:current.signal});
-    if(!response.ok){const error=await response.json().catch(()=>({}));throw new Error(error.error||`Server error ${response.status}`);}
-    const consume=(line:string)=>{
-      if(!line.trim())return;const event=JSON.parse(line);
-      if(event.type==='status')status=event.text;
-      if(event.type==='transcript'){questionText=event.text;status='Thinking…';el('timing').textContent=`Transcribed in ${(event.transcriptionMs/1000).toFixed(1)}s · waiting for first words…`;}
-      if(event.type==='delta'){if(!firstText){firstText=performance.now();el('timing').textContent=`First words in ${((firstText-questionStart)/1000).toFixed(1)}s`; }status='Answer arriving…';rawAnswer+=event.text;const partial=answerVariants(rawAnswer);flowAnswer=partial.flow;spokenAnswer=partial.spoken;explainAnswer=partial.explain;keywordsAnswer=partial.keywords;if(pendingViewAdvance&&flowAnswer){pendingViewAdvance=false;viewMode='flow';answer=flowAnswer;offset=0;layoutDirty=true;}else answer=viewMode==='flow'?flowAnswer:viewMode==='keywords'?keywordsAnswer:spokenAnswer;}
-      if(event.type==='done'){done=true;const parsed=answerVariants(rawAnswer);spokenAnswer=parsed.spoken;flowAnswer=parsed.flow;explainAnswer=parsed.explain;keywordsAnswer=parsed.keywords;viewMode=spokenAnswer?'spoken':flowAnswer?'flow':'keywords';answer=spokenAnswer||flowAnswer||keywordsAnswer;status=spokenAnswer?'Answer 1/3 · SPOKEN':'Answer ready';retryAudio=undefined;if(requestInstructions&&!keepInstructions){answerInstructions='';el<HTMLTextAreaElement>('answer-instructions').value='';el('instruction-status').textContent='Next-answer request used and cleared.';void saveSettings();}el('timing').textContent=`First words ${firstText?((firstText-questionStart)/1000).toFixed(1):'—'}s · complete ${((performance.now()-questionStart)/1000).toFixed(1)}s`;saveAnswer();}
-      if(event.type==='error')throw new Error(event.text);
-      render();
-    };
-    let done=false;
-    if(response.body){const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
-      while(true){const chunk=await reader.read();if(chunk.done){buffer+=decoder.decode();break;}buffer+=decoder.decode(chunk.value,{stream:true});let pos;while((pos=buffer.indexOf('\n'))>=0){consume(buffer.slice(0,pos));buffer=buffer.slice(pos+1);}}
-      if(buffer.trim())consume(buffer);
-    }else{for(const line of (await response.text()).split('\n'))consume(line);}
-    if(!done)throw new Error('Answer interrupted. Tap Retry last question; your partial answer is preserved.');
-  }catch(error){saveAnswer();throw new Error(current.signal.aborted?'Request stopped. Retry last question when connected.':(error as Error).message);}
-  finally{clearTimeout(timeout);if(abort===current)abort=undefined;}
+ retryAudio=pcm;abort?.abort();const current=new AbortController();abort=current;const serial=++requestSerial;
+ const timeout=setTimeout(()=>current.abort(),195000),start=performance.now();let first=0,done=false;
+ draft={question:'',answer:''};showDraft=false;status='Sending question…';render();
+ try{
+  const instructions=answerInstructions.trim();
+  const response=await fetch(backend.value.replace(/\/$/,'')+'/api/ask',{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:`Bearer ${token.value.trim()}`,'X-Answer-Instructions':encodeURIComponent(instructions)},body:new Blob([new Uint8Array(pcm)]),signal:current.signal});
+  if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.error||`Server error ${response.status}`);}
+  const consume=(line:string)=>{
+   if(!line.trim()||serial!==requestSerial)return;const event=JSON.parse(line);
+   if(event.type==='status')status=event.text;
+   if(event.type==='transcript'){draft!.question=event.text;status='Thinking…';el('timing').textContent=`Transcribed in ${(event.transcriptionMs/1000).toFixed(1)}s`;}
+   if(event.type==='delta'){
+    if(!first){first=performance.now();showDraft=true;history.page=0;el('timing').textContent=`First words ${((first-start)/1000).toFixed(1)}s`;}
+    draft!.answer+=event.text;status='Answer arriving…';
+   }
+   if(event.type==='done'){
+    done=true;const viewingDraft=showDraft;const oldEntry=history.current,oldPage=history.page;
+    history.add(draft!.question,draft!.answer);draft=undefined;showDraft=false;
+    if(viewingDraft)history.page=oldPage;else{history.index=Math.max(0,history.entries.indexOf(oldEntry));history.page=oldPage;}
+    retryAudio=undefined;status='Answer ready';persist();
+    el('timing').textContent=`First words ${first?((first-start)/1000).toFixed(1):'—'}s · complete ${((performance.now()-start)/1000).toFixed(1)}s${event.model?' · '+event.model:''}`;
+    if(instructions&&!keepInstructions){answerInstructions='';el<HTMLTextAreaElement>('answer-instructions').value='';void saveSettings();}
+   }
+   if(event.type==='error')throw Error(event.text);render();
+  };
+  if(!response.body)throw Error('Streaming unavailable. Try again.');
+  const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+  while(true){const chunk=await reader.read();if(chunk.done){buffer+=decoder.decode();break;}buffer+=decoder.decode(chunk.value,{stream:true});let pos;while((pos=buffer.indexOf('\n'))>=0){consume(buffer.slice(0,pos));buffer=buffer.slice(pos+1);}}
+  if(buffer.trim())consume(buffer);if(!done)throw Error('Answer interrupted. Retry last question.');
+ }catch(error){if(serial===requestSerial){draft=undefined;showDraft=false;status=current.signal.aborted?'Question stopped; previous answer restored':(error as Error).message;render();throw Error(status);}}
+ finally{clearTimeout(timeout);if(abort===current)abort=undefined;}
+}
+async function saveSettings(){
+ const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading,listenMode,answerLayout,answerInstructions,keepInstructions});
+ try{localStorage.setItem('ring-ask-settings',raw);}catch{}
+ if(bridge)try{await deadline(bridge.setLocalStorage('ring-ask-settings',raw),2500);}catch{}
 }
 async function checkConnection(save:boolean){
-  if(checking)return;checking=true;el<HTMLButtonElement>('save').disabled=true;el('save').textContent='Checking…';el('health').textContent='Checking connection…';
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
-  try{
-    backend.value=backend.value.trim().replace(/\/$/,'');token.value=token.value.trim();const url=new URL(backend.value);
-    if(!['https:','http:'].includes(url.protocol))throw new Error('Enter a valid server URL.');if(!token.value)throw new Error('Enter your existing bridge token first.');
-    const response=await fetch(backend.value+'/api/health',{headers:{Authorization:`Bearer ${token.value}`},signal:controller.signal});const result=await response.json();if(!response.ok)throw new Error(result.error||'Connection failed');
-    apiReady=!!result.configured;if(!apiReady)throw new Error('Server API key is not configured.');
-    if(save)await saveSettings();el<HTMLDetailsElement>('setup').open=false;el('health').textContent=`Connected · ${result.model} · ${result.profile_loaded?'your profile loaded':'profile unavailable'} · v${result.version||'unknown'}`;
-  }catch(error){apiReady=false;el('health').textContent=controller.signal.aborted?'Connection timed out. Will recheck when you reconnect.':(error as Error).message;}
-  finally{clearTimeout(timer);checking=false;el<HTMLButtonElement>('save').disabled=false;el('save').textContent='Save & check connection';}
+ if(checking)return;checking=true;el<HTMLButtonElement>('save').disabled=true;
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+ try{
+  backend.value=backend.value.trim().replace(/\/$/,'');token.value=token.value.trim();if(!token.value)throw Error('Enter your existing bridge token.');
+  const response=await fetch(backend.value+'/api/health',{headers:{Authorization:`Bearer ${token.value}`},signal:controller.signal});const result=await response.json();if(!response.ok||!result.configured)throw Error(result.error||'Server API key is not configured.');
+  apiReady=true;if(save)await saveSettings();el<HTMLDetailsElement>('setup').open=false;
+  el('health').textContent=`Connected · ${result.model} · reasoning ${result.reasoning||'default'} · v${result.version}`;
+ }catch(error){apiReady=false;el('health').textContent=(error as Error).message;}finally{clearTimeout(timer);checking=false;el<HTMLButtonElement>('save').disabled=false;}
 }
-el('start').onpointerdown=event=>{el('start').setPointerCapture(event.pointerId);dispatch(listenMode==='hold'?9:0);};
+el('start').onpointerdown=event=>{if(listenMode==='hold'){el('start').setPointerCapture(event.pointerId);dispatch(9);}};
 el('start').onpointerup=()=>{if(listenMode==='hold')dispatch(10);};
-el('start').onpointercancel=()=>{void recorder.dispatch(5);};
-el('start').onkeydown=event=>{if([' ','Enter'].includes(event.key)&&!event.repeat){event.preventDefault();dispatch(listenMode==='hold'?9:0);}};
-el('start').onkeyup=event=>{if([' ','Enter'].includes(event.key)&&listenMode==='hold'){event.preventDefault();dispatch(10);}};
-el('stop').onclick=()=>dispatch(10);
-el('cancel').onclick=()=>{abort?.abort();void recorder.dispatch(5);};
-el('up').onclick=()=>scroll(-1);el('down').onclick=()=>scroll(1);el('view').onclick=toggleView;
-el('retry').onclick=()=>{if(!retryAudio||recorder.state!=='ready')return;recorder.state='busy';status='Retrying…';render();void submit(retryAudio).catch(error=>status=error.message).finally(()=>{recorder.state='ready';render();});};
-el('reconnect').onclick=()=>{active=true;recoveryAttempts=0;void connect();void checkConnection(false);};
-el('exit').onclick=async()=>{active=false;abort?.abort();await recorder.dispatch(5);await bridge?.shutDownPageContainer(1);};
-for(const id of ['font','rows','words','width','x','y'])el<HTMLInputElement>(id).onchange=()=>{touched=true;reading=readingSettings(Object.fromEntries(['font','rows','words','width','x','y'].map(key=>[key,el<HTMLInputElement>(key).value])));offset=0;layoutDirty=true;render();void saveSettings();};
-el('reset-reading').onclick=()=>{reading=readingSettings({font:'native',rows:10,words:'auto',width:576,x:50,y:50});for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);layoutDirty=true;offset=0;render();void saveSettings();};
-el<HTMLSelectElement>('listen-mode').onchange=()=>{listenMode=el<HTMLSelectElement>('listen-mode').value==='hold'?'hold':'tap';recorder.mode=listenMode;el<HTMLButtonElement>('start').textContent=listenMode==='hold'?'Press and hold to speak':'Tap to start or stop';void saveSettings();render();};
-el('apply-instructions').onclick=()=>{answerStyle=el<HTMLSelectElement>('answer-style').value;answerInstructions=el<HTMLTextAreaElement>('answer-instructions').value.trim();keepInstructions=el<HTMLInputElement>('keep-instructions').checked;const label=el<HTMLSelectElement>('answer-style').selectedOptions[0]?.textContent||'Selected format';el('instruction-status').textContent=`${label}${answerInstructions?` · ${keepInstructions?'saved for every answer':'applies to the next answer'}`:''}.`;void saveSettings();};
+el('start').onclick=()=>{if(listenMode==='tap')dispatch(0);};
+el('start').onpointercancel=cancel;
+el('start').onkeydown=e=>{if(listenMode==='hold'&&[' ','Enter'].includes(e.key)&&!e.repeat){e.preventDefault();dispatch(9);}};
+el('start').onkeyup=e=>{if(listenMode==='hold'&&[' ','Enter'].includes(e.key)){e.preventDefault();dispatch(10);}};
+el('stop').onclick=()=>{ringInput.reset();void recorder.dispatch(3);};el('cancel').onclick=cancel;
+el('up').onclick=()=>navigateHistory(-1);el('down').onclick=()=>navigateHistory(1);
+el('next-page').onclick=()=>navigatePage(1);el('previous-page').onclick=()=>navigatePage(-1);
+el('retry').onclick=()=>{if(retryAudio&&recorder.state==='ready'){recorder.state='busy';void submit(retryAudio).catch(()=>{}).finally(()=>{recorder.state='ready';render();});}};
 el('save').onclick=()=>{touched=true;void checkConnection(true);};
 for(const input of [backend,token])input.oninput=()=>{touched=true;};
-el('demo').onclick=()=>{if(recorder.state!=='ready')return;status='Reading sample';explainAnswer='QFC REPORTING — This establishes the transformations that produce the regulatory extract.\nRECONCILE — Comparing source and extract totals reveals gaps before publication.\nINVESTIGATE — Trace exceptions backward through work and staging tables.\nPUBLISH — Release only after reconciliation and validation checks pass.';spokenAnswer="Right now, my work is focused on the QFC regulatory reporting platform at Mizuho. I work with Snowflake SQL and TIDAL to move source data through staging, work, and extract tables.\n\nA big part of my role is checking that the final extracts reconcile correctly before publication. That means tracing missing records, duplicate positions, and mapping issues back through the transformations rather than assuming a successful load means the data is correct.";flowAnswer='QFC REPORTING — build Snowflake transformations\n-> RECONCILE — compare extracts with source\n-> INVESTIGATE — trace missing or duplicate records\n-> PUBLISH — release only after checks pass';keywordsAnswer='SNOWFLAKE · TIDAL · RECONCILIATION · VALIDATION';viewMode='spoken';answer=spokenAnswer;offset=0;render();saveAnswer();};
-function resume(){active=true;recoveryAttempts=0;if(!screenReady)void connect();if(token.value)void checkConnection(false);render();}
+el('reconnect').onclick=()=>{resume();void checkConnection(false);};
+el('exit').onclick=async()=>{cancel();active=false;await bridge?.shutDownPageContainer(1);};
+el<HTMLSelectElement>('listen-mode').onchange=()=>{touched=true;ringInput.reset();listenMode=el<HTMLSelectElement>('listen-mode').value;recorder.mode=listenMode;void saveSettings();render();};
+el<HTMLSelectElement>('answer-layout').onchange=()=>{touched=true;answerLayout=el<HTMLSelectElement>('answer-layout').value;layoutDirty=true;history.page=0;void saveSettings();render();};
+for(const id of ['font','rows','words','width','x','y'])el<HTMLInputElement>(id).onchange=()=>{touched=true;reading=readingSettings(Object.fromEntries(['font','rows','words','width','x','y'].map(key=>[key,el<HTMLInputElement>(key).value])));layoutDirty=true;history.page=0;void saveSettings();render();};
+el('reset-reading').onclick=()=>{reading=readingSettings({font:'native',rows:10,words:'auto',width:576,x:50,y:50});for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);layoutDirty=true;history.page=0;void saveSettings();render();};
+el('apply-instructions').onclick=()=>{answerInstructions=el<HTMLTextAreaElement>('answer-instructions').value.trim();keepInstructions=el<HTMLInputElement>('keep-instructions').checked;el('instruction-status').textContent=keepInstructions?'Saved for future answers':'Applies to the next answer';void saveSettings();};
+el('demo').onclick=()=>{history.add('How would you move website events into GCS and BigQuery?',"I’d capture website events through the application ingestion pipeline and land the raw files in **GCS**. Keeping the original files gives us a way to audit and replay data.\n\n**Airflow** would orchestrate processing, dependencies, retries, and alerts. Python or PySpark jobs would validate schemas, handle duplicates, and apply business rules.\n\nI’d load clean data into **BigQuery staging**, then build curated reporting tables with SQL. I’d check reconciliation and freshness before publishing.\n\n**Website → Ingestion → Raw GCS → Processing → BigQuery staging → Curated tables**");showDraft=false;persist();render();};
 window.addEventListener('online',resume);window.addEventListener('pageshow',resume);
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();else saveAnswer();});
-window.addEventListener('pagehide',()=>{abort?.abort();void recorder.dispatch(5);saveAnswer();});
-setInterval(()=>{if(recorder.state==='listening'&&Date.now()-lastAudioAt>6500){screenReady=false;void recorder.dispatch(5).then(()=>{status='Microphone dropped · tap to record again';render();});el('hint').textContent='No microphone audio received. Restoring the glasses connection.';recoveryAttempts=0;scheduleRecovery();}},2000);
-setInterval(()=>{if(active&&token.value&&navigator.onLine&&!checking)void checkConnection(false);},240000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();else persist();});
+window.addEventListener('pagehide',()=>{cancel();persist();});
+setInterval(()=>{if(recorder.state==='listening'){if(Date.now()-lastAudioAt>10000){void recorder.dispatch(5);status='Audio stopped · previous answer preserved';screenReady=false;scheduleRecovery();}render();}},1000);
 render();void connect();if(token.value)void checkConnection(false);

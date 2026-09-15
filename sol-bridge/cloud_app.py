@@ -20,6 +20,7 @@ credentials = bridge.load_secrets()
 model = os.environ.get('OPENAI_MODEL', 'gpt-5.6-sol')
 if model not in ('gpt-5.6-sol', 'gpt-6-astra', 'gpt-5.6-terra'):
     raise RuntimeError('Unsupported model configuration')
+ring_model = os.environ.get('RING_MODEL', 'gpt-6-astra')
 conversation = bridge.Conversation()
 
 def app(environ, start_response):
@@ -27,7 +28,7 @@ def app(environ, start_response):
         raw = json.dumps(data).encode()
         start_response(f'{status} {HTTPStatus(status).phrase}', [('Content-Type','application/json'),('Content-Length',str(len(raw))),('Cache-Control','no-store')])
         return [raw]
-    ring_result = ring_api.handle(environ, start_response, credentials, conversation, model)
+    ring_result = ring_api.handle(environ, start_response, credentials, conversation, ring_model)
     if ring_result is not None: return ring_result
     path = environ.get('PATH_INFO')
     if path == '/health' and environ.get('REQUEST_METHOD') == 'GET':

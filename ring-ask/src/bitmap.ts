@@ -2,8 +2,8 @@ import {ImageContainerProperty,ImageRawDataUpdate,ImageRawDataUpdateResult,type 
 import {measuredPage,readingLayout,deadline,emphasisParts} from './reader.mjs';
 const canvas=document.createElement('canvas');canvas.width=576;canvas.height=288;
 const ctx=canvas.getContext('2d')!;
-function width(text:string,font:string){return emphasisParts(text).reduce((sum:number,part:any)=>{ctx.font=`${part.bold?'700':'400'} ${font}px Arial, sans-serif`;return sum+ctx.measureText(part.text).width;},0);}
-export function bitmapPage(text:string,index:number,pref:any){return measuredPage(text,index,pref,(value:string)=>width(value,pref.font));}
+export function measureFont(text:string,font:string){return emphasisParts(text).reduce((sum:number,part:any)=>{ctx.font=`${part.bold?'700':'400'} ${font}px Arial, sans-serif`;return sum+ctx.measureText(part.text).width;},0);}
+export function bitmapPage(text:string,index:number,pref:any){return measuredPage(text,index,pref,(value:string)=>measureFont(value,pref.font));}
 export function imageContainers(){return Array.from({length:4},(_,i)=>new ImageContainerProperty({containerID:i+2,containerName:`tile${i}`,xPosition:(i%2)*288,yPosition:Math.floor(i/2)*144,width:288,height:144,zOrderIndex:i+1}));}
 
 function drawWrapped(text:string,x:number,y:number,maxWidth:number,font:string){
@@ -17,6 +17,16 @@ function drawWrapped(text:string,x:number,y:number,maxWidth:number,font:string){
 }
 export class BitmapDisplay{
  private sent:string[]=[];
+ async paintFrame(bridge:EvenAppBridge,frame:any,font:string){
+  ctx.fillStyle='#000';ctx.fillRect(0,0,576,288);ctx.fillStyle='#fff';ctx.strokeStyle='#fff';ctx.textBaseline='top';ctx.font=`${font}px Arial, sans-serif`;
+  ctx.fillText(frame.header,4,2,568);
+  for(const panel of frame.panels){
+   ctx.save();ctx.beginPath();ctx.rect(panel.x,panel.y,panel.width,panel.height);ctx.clip();ctx.strokeRect(panel.x+.5,panel.y+.5,panel.width-1,panel.height-1);
+   panel.text.split('\n').forEach((line:string,i:number)=>{let x=panel.x+5;for(const part of emphasisParts(line)){ctx.font=`${part.bold?'700':'400'} ${font}px Arial, sans-serif`;ctx.fillText(part.text,x,panel.y+4+i*(Number(font)+4));x+=ctx.measureText(part.text).width;}});ctx.restore();
+  }
+  await this.send(bridge);
+ }
+
  reset(){this.sent=[];}
  async paintSplit(bridge:EvenAppBridge,left:string,right:string,font:string,pref:any){
   const box=readingLayout(pref),gap=8,half=Math.floor((box.width-gap)/2);
