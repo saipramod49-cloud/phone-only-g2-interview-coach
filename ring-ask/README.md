@@ -1,4 +1,4 @@
-# Ring Ask v0.7.2
+# Ring Ask v0.7.3
 
 Open [Ring Ask in Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), the [live Render app](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
 
@@ -17,6 +17,6 @@ There is one answer style, adapted to the request: readable conversational parag
 
 Ring Ask defaults to GPT-6 Astra with low reasoning effort, independently of the legacy agent model. Set RING_MODEL to override. The authenticated /api/health reports the deployed model, prompt style, version, and recording limit. Measured latency varies with transcription, model service, network, and glasses rendering.
 
-Latency optimization in v0.7.2 sends a compact, question-relevant slice of the candidate profile instead of the entire file, targets shorter complete answers, and routes explicit code requests to GPT-5.6 Sol while keeping GPT-6 Astra for architecture, scenarios, troubleshooting, and behavioral questions.
+Latency optimization in v0.7.3 sends a compact, question-relevant slice of the candidate profile, targets shorter complete answers, and routes code plus architecture questions to GPT-5.6 Sol. GPT-6 Astra remains available for behavioral and open-ended diagnostic questions. The prompt treats supplied project facts as exact evidence and forbids embellishing or mixing projects.
 
 Validation includes frontend unit and real-handler simulated-bridge tests, backend request/stream tests including five-minute audio, production build, live transcription-to-code smoke test, and phone-browser layout checks. Physical ring and glasses operation still requires wearer testing. v0.7.1 also excludes obsolete saved startup instructions from answer-history migration.

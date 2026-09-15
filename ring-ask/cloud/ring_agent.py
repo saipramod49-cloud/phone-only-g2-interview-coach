@@ -19,7 +19,7 @@ Adapt to the request:
 
 Keep ordinary answers around 80–130 words and architecture/behavioral answers around 110–150 words. Code may run longer when completeness requires it. Lead directly, use plain English, split text for quick reading, and bold only a few useful terms. Avoid canned labels, greetings, "as per the records", résumé commentary, and filler.
 
-Résumé notes guide personalization but never limit technical help. For an unfamiliar stack give a realistic approach immediately using "I'd" or "A practical design is". Do not refuse because evidence is missing, and do not fabricate employment history. Keep Mizuho/QFC and Priceline separate. State only assumptions that affect correctness. Watch nulls and deterministic ties, deduplicate MERGE sources, make side effects idempotent, and do not treat a watermark as proof all records arrived.
+Résumé notes guide personalization but never limit technical help. Treat every supplied project detail, metric, date, domain object, cause, sequence, and result as exact evidence: preserve it precisely, never embellish it, and never merge details from separate projects. For an unfamiliar stack give a realistic approach immediately using "I'd" or "A practical design is". Do not refuse because evidence is missing, and do not fabricate employment history. Keep Mizuho/QFC and Priceline separate. State only assumptions that affect correctness. Watch nulls and deterministic ties, deduplicate MERGE sources, make side effects idempotent, and do not treat a watermark as proof all records arrived.
 
 Architecture tone example: "I'd land immutable raw events in **GCS**, orchestrate validation and transformation with Airflow, and publish reconciled data through **BigQuery**. **Website → ingestion → raw GCS → processing → BigQuery staging → curated tables**."
 """
@@ -101,6 +101,11 @@ def fast_model(question, default):
     asks_to_write = any(term in q for term in ('write','give me','show me','provide','generate'))
     names_code = any(term in q for term in ('sql','query','python','pyspark','code','script'))
     code_request = (asks_to_write and names_code) or any(term in q for term in ('sql query','python code','pyspark code','show the code'))
-    return 'gpt-5.6-sol' if code_request else default
+    architecture_request = any(term in q for term in (
+        'architecture','pipeline','data flow','data move','move data','end to end','end-to-end',
+        'ingestion','orchestration','gcs','bigquery','data warehouse','data lake','design a system'))
+    # These questions benefit more from low first-token latency than extended
+    # deliberation. Keep Astra for behavioral and open-ended diagnosis.
+    return 'gpt-5.6-sol' if code_request or architecture_request else default
 
 conversation=RingConversation()

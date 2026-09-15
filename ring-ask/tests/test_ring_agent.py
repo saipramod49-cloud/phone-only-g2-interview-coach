@@ -53,11 +53,17 @@ class StreamTests(unittest.TestCase):
             with patch.object(ring_agent.bridge,'EXPERIENCE',path):
                 selected=ring_agent.background_for('Explain the Priceline website pipeline')
                 self.assertIn('Core stack',selected);self.assertIn('Priceline detail',selected);self.assertNotIn('Mizuho detail',selected)
-    def test_code_requests_use_fast_model_but_scenarios_keep_astra(self):
+    def test_code_and_architecture_use_fast_model_but_behavioral_keeps_astra(self):
         self.assertEqual(ring_agent.fast_model('Give me the SQL','gpt-6-astra'),'gpt-5.6-sol')
         self.assertEqual(ring_agent.fast_model('Write BigQuery SQL to keep the latest row','gpt-6-astra'),'gpt-5.6-sol')
-        self.assertEqual(ring_agent.fast_model('Explain the architecture','gpt-6-astra'),'gpt-6-astra')
+        self.assertEqual(ring_agent.fast_model('Explain the architecture','gpt-6-astra'),'gpt-5.6-sol')
+        self.assertEqual(ring_agent.fast_model('How did data move from Priceline into GCS and BigQuery?','gpt-6-astra'),'gpt-5.6-sol')
+        self.assertEqual(ring_agent.fast_model('Tell me about a conflict with a stakeholder','gpt-6-astra'),'gpt-6-astra')
         with patch.object(ring_agent.urllib.request,'urlopen',return_value=stream_bytes(['SELECT 1'])) as call:
             list(ring_agent.RingConversation().stream('Write SQL query','gpt-6-astra','fake'))
             self.assertEqual(json.loads(call.call_args.args[0].data)['model'],'gpt-5.6-sol')
+    def test_prompt_requires_exact_project_evidence(self):
+        built=ring_agent.prompt(question='Tell me about Priceline')
+        self.assertIn('preserve it precisely',built)
+        self.assertIn('never merge details from separate projects',built)
 if __name__=='__main__':unittest.main()
