@@ -1,4 +1,4 @@
-export const MAX_BYTES = 16000 * 2 * 90;
+export const MAX_BYTES = 16000 * 2 * 300;
 export function pages(text, columns = 40, rows = 6) {
   const lines = [];
   for (const paragraph of text.split('\n')) {
@@ -32,33 +32,36 @@ export class Recorder {
   dispatch(type) {
     this.queue = this.queue.then(async () => {
       if ([5,6,7].includes(type)) return this.cancel();
-      if ((type === 0 && ['tap','press'].includes(this.mode)) || (type === 9 && ['hold','press'].includes(this.mode))) {
+      const tapStops = type === 0 && this.mode === 'tap' && this.state === 'listening';
+      if (tapStops) return this.finish();
+      if ((type === 0 && this.mode === 'tap') || (type === 9 && this.mode === 'hold')) {
         if (this.state !== 'ready') return;
-        this.held = type === 9 || this.mode === 'press';
+        this.held = type === 9;
         this.chunks = []; this.bytes = 0; this.state = 'starting'; this.change('Starting microphone…');
         try {
           if (!await this.mic(true)) throw new Error('Microphone unavailable. Check G2 connection and permission.');
           this.state = 'listening'; this.change('Listening');
-          this.timer = setTimeout(() => { void this.dispatch(3); }, 90000);
+          this.timer = setTimeout(() => { void this.dispatch(3); }, 300000);
         } catch (error) { await this.cancel(); this.change(error.message); }
-      } else if (type === 3 || (type === 10 && this.held)) {
-        if (this.state !== 'listening') return;
-        this.held = false; clearTimeout(this.timer); this.state = 'stopping'; this.change('Finishing question…');
-        try {
-          if (!await this.mic(false)) throw new Error('Could not stop microphone. Reopen the plugin.');
-          const pcm = new Uint8Array(this.bytes); let offset = 0;
-          for (const chunk of this.chunks) { pcm.set(chunk, offset); offset += chunk.length; }
-          this.chunks = []; this.bytes = 0;
-          if (pcm.length < 6400) throw new Error('No question captured. Wait for Listening, then speak.');
-          this.state = 'busy'; this.change('Transcribing…');
-          // Do not hold the gesture queue while the network runs: cancellation must remain responsive.
-          const job = ++this.job;
-          Promise.resolve(this.submit(pcm)).catch(error => { if (job === this.job) this.change(error.message); })
-            .finally(() => { if (job === this.job) { this.state = 'ready'; this.change(null); } });
-        } catch (error) { await this.cancel(); this.change(error.message); }
-      }
+      } else if (type === 3 || (type === 10 && this.held)) return this.finish();
     }).catch(error => { this.state = 'ready'; this.change(error.message); });
     return this.queue;
+  }
+
+  async finish() {
+    if (this.state !== 'listening') return;
+    this.held = false; clearTimeout(this.timer); this.state = 'stopping'; this.change('Finishing question…');
+    try {
+      if (!await this.mic(false)) throw new Error('Could not stop microphone. Reopen the plugin.');
+      const pcm = new Uint8Array(this.bytes); let offset = 0;
+      for (const chunk of this.chunks) { pcm.set(chunk, offset); offset += chunk.length; }
+      this.chunks = []; this.bytes = 0;
+      if (pcm.length < 6400) throw new Error('No question captured. Wait for Listening, then speak.');
+      this.state = 'busy'; this.change('Transcribing…');
+      const job = ++this.job;
+      Promise.resolve(this.submit(pcm)).catch(error => { if (job === this.job) this.change(error.message); })
+        .finally(() => { if (job === this.job) { this.state = 'ready'; this.change(null); } });
+    } catch (error) { await this.cancel(); this.change(error.message); }
   }
   job = 0;
   audio(chunk) {

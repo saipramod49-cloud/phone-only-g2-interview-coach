@@ -52,14 +52,13 @@ test('hold and release cannot open the microphone in restored tap mode',async()=
  await r.dispatch(0);r.audio(new Uint8Array(6400));await r.dispatch(3);await tick();assert.deepEqual(calls,[true,false]);
 });
 
-test('tap then hold keeps one recording and release submits once',async()=>{
- const calls=[],audio=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;},async pcm=>audio.push(pcm));r.mode='press';
- await r.dispatch(0);r.audio(new Uint8Array(6400));await r.dispatch(9);assert.equal(r.state,'listening');
- await r.dispatch(10);await tick();assert.deepEqual(calls,[true,false]);assert.equal(audio.length,1);
- await r.dispatch(10);assert.equal(audio.length,1);
+test('tap mode starts on first tap and submits on second tap',async()=>{
+ const calls=[],audio=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;},async pcm=>audio.push(pcm));r.mode='tap';
+ await r.dispatch(0);r.audio(new Uint8Array(6400));assert.equal(r.state,'listening');
+ await r.dispatch(0);await tick();assert.deepEqual(calls,[true,false]);assert.equal(audio.length,1);
 });
-test('hold alone also starts and release stops in press mode',async()=>{
- const calls=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;});r.mode='press';
+test('hold mode starts on hold and submits on release',async()=>{
+ const calls=[];const {recorder:r}=setup(async on=>{calls.push(on);return true;});r.mode='hold';
  await r.dispatch(9);r.audio(new Uint8Array(6400));await r.dispatch(10);await tick();assert.deepEqual(calls,[true,false]);
 });
 

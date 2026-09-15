@@ -10,13 +10,13 @@ let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,c
 let reading=readingSettings(),layoutDirty=false;const bitmap=new BitmapDisplay();
 type AnswerView='flow'|'spoken'|'keywords';
 let status='Ready',answer='',spokenAnswer='',flowAnswer='',explainAnswer='',keywordsAnswer='',rawAnswer='',viewMode:AnswerView='spoken',offset=0;
-let answerStyle='natural',answerInstructions='',keepInstructions=false;
+let listenMode='tap',answerStyle='natural',answerInstructions='',keepInstructions=false;
 let abort:AbortController|undefined,retryAudio:Uint8Array|undefined;
 let recovering:ReturnType<typeof setTimeout>|undefined,paintTimer:ReturnType<typeof setTimeout>|undefined,painting=false,dirty=false;
 let lastAudioAt=0,lastPaintedAnswer:string|undefined;
 let inputCount=0,touched=false,apiReady=false,checking=false,questionText='',questionStart=0,firstText=0;
 let pendingViewAdvance=false;
-function restore(raw:any) {backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);if(raw.nativeLayoutVersion!==3&&reading.font==='native')reading=readingSettings({...reading,rows:10,words:'auto',width:576,x:50,y:50});for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);answerStyle=raw.answerStyle||'natural';answerInstructions=raw.answerInstructions||'';keepInstructions=!!raw.keepInstructions;el<HTMLSelectElement>('answer-style').value=answerStyle;el<HTMLTextAreaElement>('answer-instructions').value=answerInstructions;el<HTMLInputElement>('keep-instructions').checked=keepInstructions;}
+function restore(raw:any) {backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);if(raw.nativeLayoutVersion!==3&&reading.font==='native')reading=readingSettings({...reading,rows:10,words:'auto',width:576,x:50,y:50});for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);listenMode=raw.listenMode==='hold'?'hold':'tap';el<HTMLSelectElement>('listen-mode').value=listenMode;answerStyle=raw.answerStyle||'natural';answerInstructions=raw.answerInstructions||'';keepInstructions=!!raw.keepInstructions;el<HTMLSelectElement>('answer-style').value=answerStyle;el<HTMLTextAreaElement>('answer-instructions').value=answerInstructions;el<HTMLInputElement>('keep-instructions').checked=keepInstructions;}
 try {restore(JSON.parse(localStorage.getItem('ring-ask-settings')||'{}'));const old=JSON.parse(localStorage.getItem('ring-ask-answer')||'{}');if(old.answer){spokenAnswer=old.spokenAnswer||'';flowAnswer=old.flowAnswer||old.answer;explainAnswer=old.explainAnswer||'';keywordsAnswer=old.keywordsAnswer||'';viewMode=['flow','spoken','keywords'].includes(old.viewMode)?old.viewMode:'flow';answer=viewMode==='flow'?flowAnswer:viewMode==='spoken'?spokenAnswer:keywordsAnswer;if(!answer){viewMode='flow';answer=flowAnswer;}offset=0;status='Saved answer · '+viewMode.toUpperCase();questionText=old.question||'';}}
 catch{restore({});}
 const recorder=new Recorder(async(on:boolean)=>{
@@ -25,12 +25,12 @@ const recorder=new Recorder(async(on:boolean)=>{
   try {return await deadline(bridge.audioControl(on,AudioInputSource.Glasses),6500,'Microphone connection timed out. Reconnecting…');}
   catch(error){screenReady=false;scheduleRecovery();throw error;}
 },(message:string|null)=>{if(message){status=message;if(message==='Listening'){lastAudioAt=Date.now();}}render();},submit);
-recorder.mode='press';
+recorder.mode=listenMode;
 function saveAnswer(){try{localStorage.setItem('ring-ask-answer',JSON.stringify({answer,spokenAnswer,flowAnswer,explainAnswer,keywordsAnswer,viewMode,offset,question:questionText}));}catch{}}
 function selectView(next:AnswerView){const wasSplit=viewMode==='flow';const content={flow:flowAnswer,spoken:spokenAnswer,keywords:keywordsAnswer}[next];if(!content)return;viewMode=next;answer=content;offset=0;if(wasSplit!==(next==='flow'))layoutDirty=true;const position={spoken:1,flow:2,keywords:3}[viewMode];status=`Answer ${position}/3 · ${viewMode.toUpperCase()}`;render();saveAnswer();}
 function toggleView(){const order:AnswerView[]=['spoken','flow','keywords'];for(let step=1;step<=order.length;step++){const next=order[(order.indexOf(viewMode)+step)%order.length];if({flow:flowAnswer,spoken:spokenAnswer,keywords:keywordsAnswer}[next]){selectView(next);return;}}}
 async function saveSettings(){
-  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading,nativeLayoutVersion:3,answerStyle,answerInstructions,keepInstructions});
+  const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading,nativeLayoutVersion:3,listenMode,answerStyle,answerInstructions,keepInstructions});
   let saved=false;try{localStorage.setItem('ring-ask-settings',raw);saved=true;}catch{}
   if(bridge)try{await deadline(bridge.setLocalStorage('ring-ask-settings',raw),2500);saved=true;}catch{}
   return saved;
@@ -43,13 +43,13 @@ function lensContent(){
  if(viewMode==='flow'&&pairs().length){const p=splitPair().item;return `${p.flow}\n---\n${p.explanation}`;}
  return answer?answerPage(answer,offset).text:status+'\n\nTap to listen. Hold while speaking. Release to answer.\nSwipe down for the next page.';
 }
-const ringMenu=new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:'Resume Ring Ask',itemID:1}),new MenuItemProperty({itemName:'Start listening',itemID:2})]});
+function ringMenu(){return new MenuContainerProperty({menuItems:listenMode==='hold'?[]:[new MenuItemProperty({itemName:'Resume Ring Ask',itemID:1}),new MenuItemProperty({itemName:'Start listening',itemID:2})]});}
 function pageDefinition(){
  const custom=reading.font!=='native',box=readingLayout(reading),split=viewMode==='flow'&&pairs().length>0&&!custom;
- if(split){const p=splitPair().item,half=Math.floor((box.width-8)/2);return {containerTotalNum:2,menuObject:ringMenu,textObject:[
+ if(split){const p=splitPair().item,half=Math.floor((box.width-8)/2);return {containerTotalNum:2,menuObject:ringMenu(),textObject:[
   new TextContainerProperty({containerID:1,containerName:'flow',xPosition:box.x,yPosition:box.y,width:half,height:box.height,paddingLength:3,borderWidth:1,borderColor:15,isEventCapture:1,content:p.flow}),
   new TextContainerProperty({containerID:2,containerName:'explain',xPosition:box.x+half+8,yPosition:box.y,width:box.width-half-8,height:box.height,paddingLength:3,borderWidth:1,borderColor:15,isEventCapture:0,content:p.explanation})]};}
- return {containerTotalNum:custom?5:1,menuObject:ringMenu,textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:custom?0:box.x,yPosition:custom?0:box.y,width:custom?576:box.width,height:custom?288:box.height,paddingLength:custom?0:3,borderWidth:1,borderColor:15,isEventCapture:1,content:custom?'':lensContent(),...(custom?{zOrderIndex:0}:{})})],...(custom?{imageObject:imageContainers()}:{})};
+ return {containerTotalNum:custom?5:1,menuObject:ringMenu(),textObject:[new TextContainerProperty({containerID:1,containerName:'answer',xPosition:custom?0:box.x,yPosition:custom?0:box.y,width:custom?576:box.width,height:custom?288:box.height,paddingLength:custom?0:3,borderWidth:1,borderColor:15,isEventCapture:1,content:custom?'':lensContent(),...(custom?{zOrderIndex:0}:{})})],...(custom?{imageObject:imageContainers()}:{})};
 }
 function render(){
  const f=viewMode==='flow'&&pairs().length?splitPair():answerPage(answer,offset);offset=f.page;
@@ -58,7 +58,7 @@ function render(){
  const box=readingLayout(reading),preview=el('geometry-box');preview.style.width=`${box.width/5.76}%`;preview.style.height=`${box.height/2.88}%`;preview.style.left=`${box.x/5.76}%`;preview.style.top=`${box.y/2.88}%`;
  el('display').style.fontSize=reading.font==='native'?'':`${reading.font}px`;
  el('full-answer').textContent=(spokenAnswer?'SPOKEN VIEW\n'+spokenAnswer:'')+(flowAnswer?'\n\nFLOW VIEW\n'+flowAnswer:'')+(explainAnswer?'\n\nEXPLANATIONS\n'+explainAnswer:'')+(keywordsAnswer?'\n\nKEYWORDS\n'+keywordsAnswer:'');const labels={spoken:'Next: flow',flow:'Next: keywords',keywords:'Next: spoken'};el<HTMLButtonElement>('view').textContent=labels[viewMode];el<HTMLButtonElement>('view').disabled=![flowAnswer,spokenAnswer,keywordsAnswer].filter(Boolean).length;el('question').textContent=questionText?`Heard: ${questionText}`:'';
- el<HTMLButtonElement>('start').disabled=recorder.state==='busy';
+ el<HTMLButtonElement>('start').disabled=recorder.state==='busy';el<HTMLButtonElement>('start').textContent=listenMode==='hold'?'Press and hold to speak':recorder.state==='listening'?'Tap to stop & answer':'Tap to start listening';
  el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
  el<HTMLButtonElement>('up').disabled=offset===0;el<HTMLButtonElement>('down').disabled=offset>=f.count-1;
  el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';
@@ -98,7 +98,7 @@ async function connect(){
   if(connecting||!active)return;connecting=true;
   try{
     if(!bridge){bridge=await deadline(waitForEvenAppBridge(),8000,'Open through Even Hub to connect your glasses.');subscribe();
-      if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode='press';}}catch{}
+      if(!touched)try{const raw=await deadline(bridge!.getLocalStorage('ring-ask-settings'),2000);if(raw&&!touched){restore(JSON.parse(raw));recorder.mode=listenMode;}}catch{}
     }
     if(created){try{const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer({...pageDefinition()})),6000);if(!ok)created=false;}catch{created=false;}}
     if(!created) {const result=await deadline(bridge!.createStartUpPageContainer(new CreateStartUpPageContainer({...pageDefinition()})),6000);if(result!==0)throw new Error(`Glasses page unavailable (${result})`);created=true;}
@@ -142,11 +142,11 @@ function dispatch(type:number){
  const action=controlAction(type,active);
  if(action==='previous'||action==='next'){scroll(action==='previous'?-1:1);return;}
  if(action==='listen'){
-  if(recorder.state!=='ready')return;
+  if(recorder.state!=='ready'&&!(type===0&&listenMode==='tap'&&recorder.state==='listening'))return;
   if(!token.value.trim()){status='Set up connection on phone';el('health').textContent='Enter your bridge token and save.';render();return;}
   if(!screenReady){pendingListen=true;recoveryAttempts=0;void connect();status='Reconnecting · listening will start automatically';render();return;}
-  retryAudio=undefined;void recorder.dispatch(type);
- }else if(action==='answer'&&['starting','listening'].includes(recorder.state))void recorder.dispatch(10);
+  if(recorder.state==='ready')retryAudio=undefined;void recorder.dispatch(type);
+ }else if(action==='answer'&&listenMode==='hold'&&['starting','listening'].includes(recorder.state))void recorder.dispatch(10);
  else if(action==='answer'&&pendingListen){pendingListen=false;status='Reconnecting · tap when Ready';render();}
 }
 async function submit(pcm:Uint8Array){
@@ -186,11 +186,11 @@ async function checkConnection(save:boolean){
   }catch(error){apiReady=false;el('health').textContent=controller.signal.aborted?'Connection timed out. Will recheck when you reconnect.':(error as Error).message;}
   finally{clearTimeout(timer);checking=false;el<HTMLButtonElement>('save').disabled=false;el('save').textContent='Save & check connection';}
 }
-el('start').onpointerdown=event=>{el('start').setPointerCapture(event.pointerId);dispatch(0);};
-el('start').onpointerup=()=>dispatch(10);
+el('start').onpointerdown=event=>{el('start').setPointerCapture(event.pointerId);dispatch(listenMode==='hold'?9:0);};
+el('start').onpointerup=()=>{if(listenMode==='hold')dispatch(10);};
 el('start').onpointercancel=()=>{void recorder.dispatch(5);};
-el('start').onkeydown=event=>{if([' ','Enter'].includes(event.key)&&!event.repeat){event.preventDefault();dispatch(0);}};
-el('start').onkeyup=event=>{if([' ','Enter'].includes(event.key)){event.preventDefault();dispatch(10);}};
+el('start').onkeydown=event=>{if([' ','Enter'].includes(event.key)&&!event.repeat){event.preventDefault();dispatch(listenMode==='hold'?9:0);}};
+el('start').onkeyup=event=>{if([' ','Enter'].includes(event.key)&&listenMode==='hold'){event.preventDefault();dispatch(10);}};
 el('stop').onclick=()=>dispatch(10);
 el('cancel').onclick=()=>{abort?.abort();void recorder.dispatch(5);};
 el('up').onclick=()=>scroll(-1);el('down').onclick=()=>scroll(1);el('view').onclick=toggleView;
@@ -199,6 +199,7 @@ el('reconnect').onclick=()=>{active=true;recoveryAttempts=0;void connect();void 
 el('exit').onclick=async()=>{active=false;abort?.abort();await recorder.dispatch(5);await bridge?.shutDownPageContainer(1);};
 for(const id of ['font','rows','words','width','x','y'])el<HTMLInputElement>(id).onchange=()=>{touched=true;reading=readingSettings(Object.fromEntries(['font','rows','words','width','x','y'].map(key=>[key,el<HTMLInputElement>(key).value])));offset=0;layoutDirty=true;render();void saveSettings();};
 el('reset-reading').onclick=()=>{reading=readingSettings({font:'native',rows:10,words:'auto',width:576,x:50,y:50});for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);layoutDirty=true;offset=0;render();void saveSettings();};
+el<HTMLSelectElement>('listen-mode').onchange=()=>{listenMode=el<HTMLSelectElement>('listen-mode').value==='hold'?'hold':'tap';recorder.mode=listenMode;el<HTMLButtonElement>('start').textContent=listenMode==='hold'?'Press and hold to speak':'Tap to start or stop';void saveSettings();render();};
 el('apply-instructions').onclick=()=>{answerStyle=el<HTMLSelectElement>('answer-style').value;answerInstructions=el<HTMLTextAreaElement>('answer-instructions').value.trim();keepInstructions=el<HTMLInputElement>('keep-instructions').checked;const label=el<HTMLSelectElement>('answer-style').selectedOptions[0]?.textContent||'Selected format';el('instruction-status').textContent=`${label}${answerInstructions?` · ${keepInstructions?'saved for every answer':'applies to the next answer'}`:''}.`;void saveSettings();};
 el('save').onclick=()=>{touched=true;void checkConnection(true);};
 for(const input of [backend,token])input.oninput=()=>{touched=true;};
