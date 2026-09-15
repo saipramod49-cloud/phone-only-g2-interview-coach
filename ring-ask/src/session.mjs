@@ -16,18 +16,23 @@ export function inputGestures(event){
  return [...new Set(values.filter(v=>[0,1,2,3,9,10].includes(v)))];
 }
 
-// Wait for a single click to be disambiguated from the firmware's double-click.
+// Wait for taps to resolve as single, double-next, or triple-previous.
 export class RingInput {
- constructor(action,{set=setTimeout,clear=clearTimeout,now=Date.now,delay=450}={}){Object.assign(this,{action,set,clear,now,delay});this.timer=null;this.blockUntil=0;}
- reset(){if(this.timer!==null)this.clear(this.timer);this.timer=null;}
+ constructor(action,{set=setTimeout,clear=clearTimeout,now=Date.now,delay=450}={}){Object.assign(this,{action,set,clear,now,delay});this.timer=null;this.taps=0;this.blockUntil=0;this.ignoreNativeUntil=0;}
+ reset(){if(this.timer!==null)this.clear(this.timer);this.timer=null;this.taps=0;}
+ waitFor(taps){
+  if(this.timer!==null)this.clear(this.timer);this.taps=taps;
+  this.timer=this.set(()=>{const action=this.taps===1?0:3;this.reset();if(action===3)this.ignoreNativeUntil=this.now()+this.delay;this.action(action);},this.delay);
+ }
  feed(type){
   const now=this.now();
   if(type===0){
    if(now<this.blockUntil)return;
-   if(this.timer!==null){this.reset();this.blockUntil=now+this.delay;this.action(3);return;}
-   this.timer=this.set(()=>{this.timer=null;this.action(0);},this.delay);return;
+   if(this.taps===0){this.ignoreNativeUntil=0;this.waitFor(1);return;}
+   if(this.taps===1){this.waitFor(2);return;}
+   this.reset();this.blockUntil=now+this.delay;this.ignoreNativeUntil=now+this.delay;this.action(11);return;
   }
-  if(type===3){this.reset();if(now<this.blockUntil)return;this.blockUntil=now+this.delay;this.action(3);return;}
+  if(type===3){if(now<this.blockUntil||now<this.ignoreNativeUntil)return;if(this.taps<2)this.waitFor(2);return;}
   this.reset();
   if(type===9||type===10)this.blockUntil=now+this.delay;
   this.action(type);

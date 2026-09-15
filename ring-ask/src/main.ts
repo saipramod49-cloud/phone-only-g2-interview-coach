@@ -122,7 +122,7 @@ function navigateHistory(direction:number){
 }
 function dispatch(type:number){
  if(!active||backgrounded)return;
- if(type===3){navigatePage(1);return;}if(type===1||type===2){navigateHistory(type===1?-1:1);return;}
+ if(type===3){navigatePage(1);return;}if(type===11){navigatePage(-1);return;}if(type===1||type===2){navigateHistory(type===1?-1:1);return;}
  if(type===10){if(listenMode==='hold')void recorder.dispatch(10);return;}
  if((listenMode==='tap'&&type!==0)||(listenMode==='hold'&&type!==9))return;
  if(['busy','stopping'].includes(recorder.state))return;

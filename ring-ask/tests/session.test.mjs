@@ -17,6 +17,13 @@ test('double click cancels pending tap and repeated firmware event changes one p
  assert.deepEqual(actions,[3]);
  input.feed(0);c.advance(100);input.feed(3);c.advance(600);assert.deepEqual(actions,[3,3]);
 });
+test('third tap changes to previous page without leaking a single tap',()=>{
+ const c=clock(),actions=[],input=new RingInput(t=>actions.push(t),c);
+ input.feed(0);c.advance(80);input.feed(3);c.advance(80);input.feed(0);c.advance(600);
+ assert.deepEqual(actions,[11]);
+ input.feed(0);c.advance(80);input.feed(0);c.advance(80);input.feed(0);c.advance(600);
+ assert.deepEqual(actions,[11,11]);
+});
 test('hold/release cancels leading and trailing taps',()=>{
  const c=clock(),actions=[],input=new RingInput(t=>actions.push(t),c);
  input.feed(0);c.advance(200);input.feed(9);c.advance(300000);input.feed(10);input.feed(0);c.advance(1000);
