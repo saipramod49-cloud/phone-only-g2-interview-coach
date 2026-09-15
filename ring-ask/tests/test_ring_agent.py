@@ -40,7 +40,7 @@ class StreamTests(unittest.TestCase):
             profile=Path(folder)/'profile.md';profile.write_text('Verified note: QFC uses Snowflake and TIDAL.')
             with patch.object(ring_agent.bridge,'EXPERIENCE',profile):
                 prompt=ring_agent.prompt('natural',question='Tell me about QFC.')
-                self.assertIn(profile.read_text(),prompt);self.assertIn('Give one natural',prompt);self.assertIn('start with runnable fenced code',prompt)
+                self.assertIn(profile.read_text(),prompt);self.assertIn('Give one natural',prompt);self.assertIn('minimal runnable code',prompt)
                 self.assertNotIn('Reply with one to three short bullet points',prompt)
     def test_custom_request_and_format_are_added_to_prompt(self):
         prompt=ring_agent.prompt('technical','Explain the trade-off for a beginner.')
@@ -58,6 +58,9 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(ring_agent.fast_model('Write BigQuery SQL to keep the latest row','gpt-6-astra'),'gpt-5.6-sol')
         self.assertEqual(ring_agent.fast_model('Explain the architecture','gpt-6-astra'),'gpt-5.6-sol')
         self.assertEqual(ring_agent.fast_model('How did data move from Priceline into GCS and BigQuery?','gpt-6-astra'),'gpt-5.6-sol')
+        self.assertEqual(ring_agent.fast_model('Which join keeps every order?','gpt-6-astra'),'gpt-5.6-sol')
+        self.assertEqual(ring_agent.fast_model('What Pandas feature reads a large file?','gpt-6-astra'),'gpt-5.6-sol')
+        self.assertEqual(ring_agent.fast_model('Two records have the same timestamp. What would you use?','gpt-6-astra'),'gpt-5.6-sol')
         self.assertEqual(ring_agent.fast_model('Tell me about a conflict with a stakeholder','gpt-6-astra'),'gpt-6-astra')
         with patch.object(ring_agent.urllib.request,'urlopen',return_value=stream_bytes(['SELECT 1'])) as call:
             list(ring_agent.RingConversation().stream('Write SQL query','gpt-6-astra','fake'))
@@ -66,4 +69,18 @@ class StreamTests(unittest.TestCase):
         built=ring_agent.prompt(question='Tell me about Priceline')
         self.assertIn('preserve it precisely',built)
         self.assertIn('never merge details from separate projects',built)
+        self.assertIn('never substitute generic technologies',built)
+        self.assertIn('about 25–55 words',built)
+        self.assertIn('about 50–80 words',built)
+    def test_only_followups_receive_previous_answer_context(self):
+        self.assertTrue(ring_agent.uses_conversation_context('Why that one?'))
+        self.assertTrue(ring_agent.uses_conversation_context('Now give me the SQL'))
+        self.assertFalse(ring_agent.uses_conversation_context('Which join keeps every order?'))
+        agent=ring_agent.RingConversation();agent.history.extend([
+            {'role':'user','content':'Old unrelated question'},
+            {'role':'assistant','content':'Old unrelated answer'}])
+        with patch.object(ring_agent.urllib.request,'urlopen',return_value=stream_bytes(['LEFT JOIN'])) as call:
+            list(agent.stream('Which join keeps every order?','gpt-6-astra','fake'))
+        messages=json.loads(call.call_args.args[0].data)['messages']
+        self.assertEqual([item['role'] for item in messages],['system','user'])
 if __name__=='__main__':unittest.main()

@@ -40,7 +40,16 @@ const recorder=new Recorder(async(on:boolean)=>{
 recorder.mode=listenMode;
 const ringInput=new RingInput(dispatch);
 function captureStatus(){
- if(recorder.state==='listening'){const secs=Math.floor((Date.now()-recordStarted)/1000);return `Listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')} · ${listenMode==='tap'?'tap to stop':'release to answer'}`;}
+ if(recorder.state==='listening'){const secs=Math.floor((Date.now()-recordStarted)/1000);return `🐶 Listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')} · ${listenMode==='tap'?'tap to stop':'release to answer'}`;}
+ if(['starting','stopping','busy'].includes(recorder.state)||['Sending question…','Transcribing…','Thinking…','Answer arriving…'].includes(status))return '🐶💭 Thinking…';
+ if(status==='Ready'||status==='Answer ready')return '🐶 Ready for next question';
+ return status;
+}
+function puppyState(){return recorder.state==='listening'?'listening':(['starting','stopping','busy'].includes(recorder.state)||['Sending question…','Transcribing…','Thinking…','Answer arriving…'].includes(status))?'thinking':(status==='Ready'||status==='Answer ready')?'ready':'notice';}
+function puppyHeader(){
+ if(recorder.state==='listening'){const secs=Math.floor((Date.now()-recordStarted)/1000);return `🐶 Listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`;}
+ if(puppyState()==='thinking')return '🐶💭 Thinking';
+ if(puppyState()==='ready')return '🐶 Ready';
  return status;
 }
 function displayed(){return showDraft&&draft?.answer?draft:history.current;}
@@ -76,7 +85,7 @@ function pageDefinition(){
   new TextContainerProperty({containerID:1,containerName:'header',xPosition:0,yPosition:0,width:576,height:32,paddingLength:2,isEventCapture:1,content:header(f)}),
   ...f.panels.map((p:any,i:number)=>new TextContainerProperty({containerID:i+2,containerName:i?'answer':'question',xPosition:p.x,yPosition:p.y,width:p.width,height:p.height,paddingLength:3,borderWidth:1,borderColor:15,isEventCapture:0,content:p.text}))]};
 }
-function header(f:any){return ['starting','listening','stopping'].includes(recorder.state)?`${captureStatus()} · ${f.page+1}/${f.count}`:f.header;}
+function header(f:any){return `${f.label} · Page ${f.page+1}/${f.count} · ${puppyHeader()}`;}
 async function paint(){
  if(painting||!bridge||!screenReady||!active||backgrounded)return;painting=true;
  try{while(dirty&&screenReady&&active&&!backgrounded){dirty=false;

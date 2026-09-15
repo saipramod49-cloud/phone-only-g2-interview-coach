@@ -11,15 +11,17 @@ import bridge
 STYLE = """Give one natural, technically accurate interview answer to the latest question. Use conversation context for follow-ups. Never output separate answer modes, page numbers, or repeat the question.
 
 Adapt to the request:
-- SQL/Python/PySpark code request: start with runnable fenced code in the requested dialect. Preserve indentation. Use stated names; if missing, use a small sensible schema and state the assumption after the code. Then give 2–3 short sentences on the mechanism and important correctness caveat. A follow-up such as "give me the SQL" means code for the previous question.
-- Architecture/scenario: 3–4 short conversational paragraphs covering the relevant source, ingestion, storage, orchestration, processing, serving, and reliability. End with one bold arrow flow matching the explanation. Airflow orchestrates jobs; do not present it as a data transport hop.
-- Troubleshooting: check scope first, trace the first failing layer, fix and safely reprocess, then validate. Use 3 short practical paragraphs and a flow only when useful.
-- Comparison/definition: direct answer, mechanism, when to choose each, and one trade-off.
-- Behavioral: situation, what I did, why, and result or lesson. Use supplied background when relevant without inventing experience or metrics.
+- Short technical question (which join, CTE, function, library, condition, or feature): answer in 1–3 sentences and about 25–55 words. Name the choice in the first five words, explain why it fits, and give only the most important caveat. Do not write code unless asked.
+- SQL/Python/PySpark code request: first name the technique and key condition in one short sentence. Then give only the minimal runnable code needed in the requested dialect; omit sample data, setup, and alternative implementations unless requested. Preserve indentation. End with at most one correctness caveat. A follow-up such as "give me the SQL" means code for the previous question.
+- Architecture/scenario: use 2–3 short conversational paragraphs and about 70–110 words. Cover only components relevant to the question. End with one bold arrow flow matching the explanation. Airflow orchestrates jobs; do not present it as a data transport hop.
+- Troubleshooting: check scope, locate the first failing layer, fix and safely reprocess, then validate in about 60–100 words. Do not recite every possible check.
+- Project/example question: give one specific example and result in about 50–80 words. Do not add a general lesson unless asked.
+- Comparison/definition: answer directly in about 40–75 words with the decision and one trade-off.
+- Behavioral: situation, what I did, why, and result or lesson in about 90–130 words. Use supplied background when relevant without inventing experience or metrics.
 
-Keep ordinary answers around 80–130 words and architecture/behavioral answers around 110–150 words. Code may run longer when completeness requires it. Lead directly, use plain English, split text for quick reading, and bold only a few useful terms. Avoid canned labels, greetings, "as per the records", résumé commentary, and filler.
+Lead directly, use plain English, split text for quick reading, and bold only a few useful terms. Answer the exact question and stop. For a follow-up, provide only the new information instead of repeating the previous answer. Avoid exhaustive checklists, canned labels, greetings, "as per the records", résumé commentary, evidence disclaimers, and filler.
 
-Résumé notes guide personalization but never limit technical help. Treat every supplied project detail, metric, date, domain object, cause, sequence, and result as exact evidence: preserve it precisely, never embellish it, and never merge details from separate projects. For an unfamiliar stack give a realistic approach immediately using "I'd" or "A practical design is". Do not refuse because evidence is missing, and do not fabricate employment history. Keep Mizuho/QFC and Priceline separate. State only assumptions that affect correctness. Watch nulls and deterministic ties, deduplicate MERGE sources, make side effects idempotent, and do not treat a watermark as proof all records arrived.
+Résumé notes guide personalization but never limit technical help. Treat every supplied project detail, metric, date, domain object, cause, sequence, and result as exact evidence: preserve it precisely, never embellish it, and never merge details from separate projects. When a company or project is named, use only its matching evidence and never substitute generic technologies; Priceline uses Kafka/GCS/BigQuery, while Mizuho QFC uses Snowflake/TIDAL. When asked for a personal example, use a documented example if one exists. For an unfamiliar stack give a realistic approach immediately using "I'd" or "A practical design is". Do not refuse because evidence is missing, and do not fabricate employment history. State only assumptions that affect correctness. Watch nulls and deterministic ties, deduplicate MERGE sources, make side effects idempotent, and do not treat a watermark as proof all records arrived.
 
 Architecture tone example: "I'd land immutable raw events in **GCS**, orchestrate validation and transformation with Airflow, and publish reconciled data through **BigQuery**. **Website → ingestion → raw GCS → processing → BigQuery staging → curated tables**."
 """
@@ -64,7 +66,8 @@ class RingConversation:
             yield {'type':'done'}
             return
         effective_model = fast_model(question, model)
-        payload = {'model':effective_model,'messages':[{'role':'system','content':prompt(style, instructions, question)}]+list(self.history)+[{'role':'user','content':question}],
+        context=list(self.history)[-2:] if uses_conversation_context(question) else []
+        payload = {'model':effective_model,'messages':[{'role':'system','content':prompt(style, instructions, question)}]+context+[{'role':'user','content':question}],
                    'stream':True,'store':False,'reasoning_effort':'low',
                    'max_completion_tokens':1600}
         if effective_model in ('gpt-5.6-sol','gpt-6-astra'): payload['service_tier']='fast'
@@ -101,11 +104,20 @@ def fast_model(question, default):
     asks_to_write = any(term in q for term in ('write','give me','show me','provide','generate'))
     names_code = any(term in q for term in ('sql','query','python','pyspark','code','script'))
     code_request = (asks_to_write and names_code) or any(term in q for term in ('sql query','python code','pyspark code','show the code'))
-    architecture_request = any(term in q for term in (
-        'architecture','pipeline','data flow','data move','move data','end to end','end-to-end',
-        'ingestion','orchestration','gcs','bigquery','data warehouse','data lake','design a system'))
-    # These questions benefit more from low first-token latency than extended
-    # deliberation. Keep Astra for behavioral and open-ended diagnosis.
-    return 'gpt-5.6-sol' if code_request or architecture_request else default
+    technical_request = any(term in q for term in (
+        'sql','join','cte','query','python','pandas','pyspark','spark','dataframe','row_number',
+        'airflow','composer','kafka','gcs','bigquery','snowflake','tidal','architecture','pipeline',
+        'data flow','data move','move data','end to end','end-to-end','ingestion','orchestration',
+        'warehouse','data lake','partition','cluster','duplicate','deduplic','schema','reconciliation'))
+    behavioral_request = any(term in q for term in (
+        'tell me about yourself','tell me about a time','why should we hire','strength','weakness',
+        'conflict','stakeholder','leadership','mentored','disagreed','mistake you made'))
+    return default if behavioral_request and not technical_request else 'gpt-5.6-sol'
+
+def uses_conversation_context(question):
+    q=' '.join(question.lower().split())
+    starts=('why ','how about ','what about ','now ','then ','and ','also ','give me ','show me ','what if ')
+    references=('previous','above','same ','that ','it ','those ','this approach','the query','the code')
+    return q.startswith(starts) or any(term in q for term in references)
 
 conversation=RingConversation()
