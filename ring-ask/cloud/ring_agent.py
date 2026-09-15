@@ -12,7 +12,7 @@ STYLE = """Give one natural, technically accurate interview answer to the latest
 
 Adapt to the request:
 - Short technical question (which join, CTE, function, library, condition, or feature): answer in 1–3 sentences and about 25–55 words. Name the choice in the first five words, explain why it fits, and give only the most important caveat. Do not write code unless asked.
-- SQL/Python/PySpark code request: first name the technique and key condition in one short sentence. Then give only the minimal runnable code needed in the requested dialect; omit sample data, setup, and alternative implementations unless requested. Preserve indentation. End with at most one correctness caveat. A follow-up such as "give me the SQL" means code for the previous question.
+- SQL/Python/PySpark code request: first name the technique and key condition in one short sentence. Then give only the minimal runnable code needed in the requested dialect; omit sample data, setup, and alternative implementations unless requested. Preserve indentation. End with at most one correctness caveat. A follow-up such as "give me the SQL" means code for the previous question. For a chained follow-up such as "write only the corrected SQL," preserve the earlier query's goal, tables, and columns, then apply the most recent correction. If the user asks for only code, output only the fenced code.
 - Architecture/scenario: use 2–3 short conversational paragraphs and about 70–110 words. Cover only components relevant to the question. End with one bold arrow flow matching the explanation. Airflow orchestrates jobs; do not present it as a data transport hop.
 - Troubleshooting: check scope, locate the first failing layer, fix and safely reprocess, then validate in about 60–100 words. Do not recite every possible check.
 - Project/example question: give one specific example and result in about 50–80 words. Do not add a general lesson unless asked.
@@ -66,7 +66,9 @@ class RingConversation:
             yield {'type':'done'}
             return
         effective_model = fast_model(question, model)
-        context=list(self.history)[-2:] if uses_conversation_context(question) else []
+        # Two exchanges are needed for chained edits: original SQL -> requested
+        # correction -> "write only the corrected SQL".
+        context=list(self.history)[-4:] if uses_conversation_context(question) else []
         payload = {'model':effective_model,'messages':[{'role':'system','content':prompt(style, instructions, question)}]+context+[{'role':'user','content':question}],
                    'stream':True,'store':False,'reasoning_effort':'low',
                    'max_completion_tokens':1600}
@@ -116,8 +118,10 @@ def fast_model(question, default):
 
 def uses_conversation_context(question):
     q=' '.join(question.lower().split())
-    starts=('why ','how about ','what about ','now ','then ','and ','also ','give me ','show me ','what if ')
-    references=('previous','above','same ','that ','it ','those ','this approach','the query','the code')
+    starts=('why ','how about ','what about ','now ','then ','and ','also ','give me ','give it ','give in ',
+            'show me ','write only ','write the corrected ','correct ','fix ','modify ','update that ',
+            'convert that ','in sql','using sql','what if ')
+    references=('previous','above','same ','that ','it ','those ','corrected','this approach','the query','the code')
     return q.startswith(starts) or any(term in q for term in references)
 
 conversation=RingConversation()

@@ -1,4 +1,4 @@
-# Ring Ask v0.7.5
+# Ring Ask v0.7.6
 
 Open [Ring Ask in Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), the [live Render app](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
 
@@ -17,6 +17,6 @@ There is one answer style, adapted to the request: readable conversational parag
 
 Ring Ask defaults to GPT-6 Astra with low reasoning effort, independently of the legacy agent model. Set RING_MODEL to override. The authenticated /api/health reports the deployed model, prompt style, version, and recording limit. Measured latency varies with transcription, model service, network, and glasses rendering.
 
-Latency optimization in v0.7.5 sends a compact, question-relevant slice of the candidate profile and routes normal interview questions to GPT-5.6 Sol. GPT-6 Astra is reserved for leadership and HR-style behavioral questions. Independent questions do not inherit previous answers; explicit follow-ups retain one prior exchange. Direct technical answers use 25–55 words, project examples 50–80 words, and requested scripts include only the essential technique, condition, and minimal code. The prompt treats supplied project facts as exact evidence and forbids embellishing, generic technology substitution, or project mixing.
+Latency optimization in v0.7.6 sends a compact, question-relevant slice of the candidate profile and routes normal interview questions to GPT-5.6 Sol. GPT-6 Astra is reserved for leadership and HR-style behavioral questions. Independent questions do not inherit previous answers; explicit follow-ups retain the two recent exchanges needed for chained SQL corrections. Direct technical answers use 25–55 words, project examples 50–80 words, and requested scripts include only the essential technique, condition, and minimal code. The prompt treats supplied project facts as exact evidence and forbids embellishing, generic technology substitution, or project mixing.
 
 Validation includes frontend unit and real-handler simulated-bridge tests, backend request/stream tests including five-minute audio, production build, live transcription-to-code smoke test, and phone-browser layout checks. Physical ring and glasses operation still requires wearer testing. v0.7.1 also excludes obsolete saved startup instructions from answer-history migration.

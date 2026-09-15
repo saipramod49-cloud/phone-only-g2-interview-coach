@@ -79,6 +79,17 @@ test('app menu foreground return rebuilds the lens and both layouts use question
  }finally{a.dispose();}
 });
 
+test('system-menu exit recovers on the next ring input without reopening the phone app',async()=>{
+ const a=await app();try{
+  a.ids.get('demo').onclick();
+  a.event({sysEvent:{eventType:7}});await delay(10);
+  a.event({sysEvent:{eventType:3}});await delay(550);
+  assert.ok(a.pages.length>=2);assert.match(a.ids.get('page').textContent,/Page 2\//);assert.deepEqual(a.mic,[false]);
+  a.event({textEvent:{eventType:0}});await delay(500);assert.deepEqual(a.mic,[false,true]);
+  a.ids.get('cancel').onclick();await delay(20);
+ }finally{a.dispose();}
+});
+
 test('app migration drops old startup text but restores completed question answers',async()=>{
  for(const prior of [{answer:'Tap to record a question. Double-tap to finish.'},{question:'Real question?',answer:'Real answer.'}]){
   const a=await app('tap',prior);try{

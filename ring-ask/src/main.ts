@@ -110,15 +110,23 @@ async function connect(){
  }catch(error){screenReady=false;el('connection').textContent='Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
  finally{connecting=false;if(!screenReady)scheduleRecovery();}
 }
-function suspend(closed=false){backgrounded=true;screenReady=false;if(closed)active=false;ringInput.reset();void recorder.dispatch(5);persist();}
+function suspend(closed=false){backgrounded=true;screenReady=false;if(closed){active=false;created=false;}ringInput.reset();void recorder.dispatch(5);persist();}
 function resume(){active=true;backgrounded=false;recoveryAttempts=0;if(!screenReady)void connect();render();}
+async function recoverFromInput(types:number[]){
+ active=true;backgrounded=false;recoveryAttempts=0;created=false;screenReady=false;ringInput.reset();
+ await connect();
+ if(!screenReady)return;
+ for(const type of types){el('input-status').textContent=`Wake input ${++inputCount}: ${type}`;ringInput.feed(type);}
+}
 function subscribe(){
  bridge!.onEvenHubEvent(event=>{
   if(event.audioEvent){lastAudioAt=Date.now();recorder.audio(event.audioEvent.audioPcm);}
   const menu=event.menuItemClickEvent?.itemID;if(menu){resume();if(menu===2)navigateHistory(-1);if(menu===3){history.latest();showDraft=!!draft?.answer;render();}return;}
   const system=event.sysEvent?.eventType;
   if(system===4){resume();return;}if(system===5){suspend();return;}if(system===6||system===7){suspend(true);return;}
-  for(const type of gestures(event)){el('input-status').textContent=`Input ${++inputCount}: ${type} · ${recorder.state}`;ringInput.feed(type);}
+  const types=gestures(event);
+  if(types.length&&(!active||backgrounded||!screenReady)){void recoverFromInput(types);return;}
+  for(const type of types){el('input-status').textContent=`Input ${++inputCount}: ${type} · ${recorder.state}`;ringInput.feed(type);}
  });
  bridge!.onDeviceStatusChanged(device=>{if(device.isDisconnected()||device.isConnectionFailed()){screenReady=false;ringInput.reset();void recorder.dispatch(5);scheduleRecovery();}else if(device.isConnected())resume();});
 }

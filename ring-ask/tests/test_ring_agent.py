@@ -75,6 +75,8 @@ class StreamTests(unittest.TestCase):
     def test_only_followups_receive_previous_answer_context(self):
         self.assertTrue(ring_agent.uses_conversation_context('Why that one?'))
         self.assertTrue(ring_agent.uses_conversation_context('Now give me the SQL'))
+        self.assertTrue(ring_agent.uses_conversation_context('Give it in SQL'))
+        self.assertTrue(ring_agent.uses_conversation_context('Write only the corrected SQL'))
         self.assertFalse(ring_agent.uses_conversation_context('Which join keeps every order?'))
         agent=ring_agent.RingConversation();agent.history.extend([
             {'role':'user','content':'Old unrelated question'},
@@ -83,4 +85,15 @@ class StreamTests(unittest.TestCase):
             list(agent.stream('Which join keeps every order?','gpt-6-astra','fake'))
         messages=json.loads(call.call_args.args[0].data)['messages']
         self.assertEqual([item['role'] for item in messages],['system','user'])
+    def test_chained_sql_followup_keeps_original_query_and_correction(self):
+        agent=ring_agent.RingConversation();agent.history.extend([
+            {'role':'user','content':'Give me SQL using ROW_NUMBER.'},
+            {'role':'assistant','content':'SELECT ... ROW_NUMBER() OVER (ORDER BY order_ts DESC) AS rn'},
+            {'role':'user','content':'Two orders have the same timestamp. Make it deterministic.'},
+            {'role':'assistant','content':'Add order_id DESC as the final tie-breaker.'}])
+        with patch.object(ring_agent.urllib.request,'urlopen',return_value=stream_bytes(['```sql\nSELECT corrected\n```'])) as call:
+            list(agent.stream('Write only the corrected SQL','gpt-6-astra','fake'))
+        messages=json.loads(call.call_args.args[0].data)['messages']
+        self.assertEqual([item['content'] for item in messages[-5:-1]],list(item['content'] for item in agent.history)[-6:-2])
+        self.assertEqual(messages[-1]['content'],'Write only the corrected SQL')
 if __name__=='__main__':unittest.main()
