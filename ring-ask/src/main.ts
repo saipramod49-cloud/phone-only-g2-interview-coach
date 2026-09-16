@@ -69,6 +69,7 @@ function render(){
  el('qa-panels').classList.toggle('side',answerLayout==='side');appendRich(el('full-answer'),displayed()?.answer||'');
  el('reading-note').textContent=`${f.rows} answer lines per page. Long questions are shortened on the lens; the complete question is shown on this phone.`;
  el<HTMLButtonElement>('start').textContent=listenMode==='hold'?'Hold to listen':'Tap to '+(['starting','listening'].includes(recorder.state)?'stop & answer':'start listening');
+ el<HTMLButtonElement>('restore-listen').hidden=screenReady&&active&&!backgrounded;
  el<HTMLButtonElement>('start').disabled=['busy','stopping'].includes(recorder.state);
  el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
  el<HTMLButtonElement>('listen-mode').disabled=recorder.state!=='ready';
@@ -110,13 +111,23 @@ async function connect(){
  }catch(error){screenReady=false;el('connection').textContent='Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
  finally{connecting=false;if(!screenReady)scheduleRecovery();}
 }
-function suspend(closed=false){backgrounded=true;screenReady=false;if(closed){active=false;created=false;}ringInput.reset();void recorder.dispatch(5);persist();}
+function suspend(closed=false){backgrounded=true;screenReady=false;if(closed){active=false;created=false;}ringInput.reset();void recorder.dispatch(5);status='Glasses controls paused';el('connection').textContent='Restore controls from phone';persist();render();}
 function resume(){active=true;backgrounded=false;recoveryAttempts=0;if(!screenReady)void connect();render();}
 async function recoverFromInput(types:number[]){
  active=true;backgrounded=false;recoveryAttempts=0;created=false;screenReady=false;ringInput.reset();
  await connect();
  if(!screenReady)return;
  for(const type of types){el('input-status').textContent=`Wake input ${++inputCount}: ${type}`;ringInput.feed(type);}
+}
+async function restoreAndListen(){
+ if(['busy','stopping'].includes(recorder.state))return;
+ if(!token.value.trim()){status='Enter your bridge token in Agent connection';render();return;}
+ status='Restoring glasses controls…';el('connection').textContent='Restoring glasses…';render();
+ await recorder.dispatch(5);active=true;backgrounded=false;recoveryAttempts=0;created=false;screenReady=false;ringInput.reset();
+ await connect();
+ if(!screenReady){status='Could not restore glasses. Keep Ring Ask open and try again.';render();return;}
+ recorder.mode=listenMode;
+ await recorder.dispatch(listenMode==='hold'?9:0);
 }
 function subscribe(){
  bridge!.onEvenHubEvent(event=>{
@@ -196,13 +207,15 @@ async function checkConnection(save:boolean){
   el('health').textContent=`Connected · ${result.model} · reasoning ${result.reasoning||'default'} · v${result.version}`;
  }catch(error){apiReady=false;el('health').textContent=(error as Error).message;}finally{clearTimeout(timer);checking=false;el<HTMLButtonElement>('save').disabled=false;}
 }
-el('start').onpointerdown=event=>{if(listenMode==='hold'){el('start').setPointerCapture(event.pointerId);dispatch(9);}};
-el('start').onpointerup=()=>{if(listenMode==='hold')dispatch(10);};
-el('start').onclick=()=>{if(listenMode==='tap')dispatch(0);};
+let recoveryPress=false;
+el('start').onpointerdown=event=>{if(listenMode==='hold'){el('start').setPointerCapture(event.pointerId);if(!active||backgrounded||!screenReady){recoveryPress=true;void restoreAndListen();}else dispatch(9);}};
+el('start').onpointerup=()=>{if(listenMode==='hold'){if(recoveryPress){recoveryPress=false;return;}dispatch(10);}};
+el('start').onclick=()=>{if(listenMode==='tap'){if(!active||backgrounded||!screenReady)void restoreAndListen();else dispatch(0);}};
 el('start').onpointercancel=cancel;
 el('start').onkeydown=e=>{if(listenMode==='hold'&&[' ','Enter'].includes(e.key)&&!e.repeat){e.preventDefault();dispatch(9);}};
 el('start').onkeyup=e=>{if(listenMode==='hold'&&[' ','Enter'].includes(e.key)){e.preventDefault();dispatch(10);}};
 el('stop').onclick=()=>{ringInput.reset();void recorder.dispatch(3);};el('cancel').onclick=cancel;
+el('restore-listen').onclick=()=>{void restoreAndListen();};
 el('up').onclick=()=>navigateHistory(-1);el('down').onclick=()=>navigateHistory(1);
 el('next-page').onclick=()=>navigatePage(1);el('previous-page').onclick=()=>navigatePage(-1);
 el('retry').onclick=()=>{if(retryAudio&&recorder.state==='ready'){recorder.state='busy';void submit(retryAudio).catch(()=>{}).finally(()=>{recorder.state='ready';render();});}};

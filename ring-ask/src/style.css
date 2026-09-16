@@ -13,3 +13,4 @@ textarea:focus-visible,a:focus-visible{outline:2px solid #adf075;outline-offset:
 
 #qa-panels {display:grid;grid-template-columns:1fr;gap:12px;} #qa-panels.side {grid-template-columns:36% 1fr;} #question {margin:0;padding:12px;border:1px solid #66804f;border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;} #display {margin:0;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0;} #full-answer {white-space:pre-wrap;overflow-wrap:anywhere;} .code-line {font-family:monospace;white-space:pre-wrap;} #full-answer strong {color:#c8eda6;}
 #status{display:inline-flex;align-items:center;min-height:20px;color:#b8f491}
+.restore-listen{width:100%;margin-top:10px;background:#f2d889;color:#1e1b0d;font-weight:700}.restore-listen[hidden]{display:none}

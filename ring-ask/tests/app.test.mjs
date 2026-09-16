@@ -90,6 +90,15 @@ test('system-menu exit recovers on the next ring input without reopening the pho
  }finally{a.dispose();}
 });
 
+test('phone recovery button recreates the glasses page and starts listening in one press',async()=>{
+ const a=await app();try{
+  a.event({sysEvent:{eventType:7}});await delay(20);assert.equal(a.ids.get('restore-listen').hidden,false);
+  a.ids.get('restore-listen').onclick();await delay(80);
+  assert.ok(a.pages.length>=2);assert.deepEqual(a.mic,[false,false,true]);assert.equal(a.ids.get('restore-listen').hidden,true);
+  a.ids.get('cancel').onclick();await delay(20);
+ }finally{a.dispose();}
+});
+
 test('app migration drops old startup text but restores completed question answers',async()=>{
  for(const prior of [{answer:'Tap to record a question. Double-tap to finish.'},{question:'Real question?',answer:'Real answer.'}]){
   const a=await app('tap',prior);try{
