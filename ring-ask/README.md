@@ -1,4 +1,4 @@
-# Ring Ask v0.7.7
+# Ring Ask v0.7.8
 
 Open [Ring Ask in Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), the [live Render app](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
 
@@ -17,8 +17,8 @@ There is one answer style, adapted to the request: readable conversational parag
 
 Ring Ask defaults to GPT-6 Astra with low reasoning effort, independently of the legacy agent model. Set RING_MODEL to override. The authenticated /api/health reports the deployed model, prompt style, version, and recording limit. Measured latency varies with transcription, model service, network, and glasses rendering.
 
-Wake recovery in v0.7.7 adds a phone-side “Restore glasses controls & start listening” action that recreates the glasses page and opens the microphone in one press. The normal Start button performs the same recovery when tap mode detects an inactive display.
+Wake recovery in v0.7.8 is available inside the glasses menu. **Start listening** is the first plugin action, directly above **Resume Ring Ask**; it force-rebuilds ring capture and opens the glasses microphone. **Resume Ring Ask** force-rebuilds controls without recording, and returning from the system menu triggers that rebuild automatically.
 
-Latency optimization in v0.7.7 sends a compact, question-relevant slice of the candidate profile and routes normal interview questions to GPT-5.6 Sol. GPT-6 Astra is reserved for leadership and HR-style behavioral questions. Independent questions do not inherit previous answers; explicit follow-ups retain the two recent exchanges needed for chained SQL corrections. Direct technical answers use 25–55 words, project examples 50–80 words, and requested scripts include only the essential technique, condition, and minimal code. The prompt treats supplied project facts as exact evidence and forbids embellishing, generic technology substitution, or project mixing.
+Latency optimization sends a compact, question-relevant slice of the candidate profile and routes normal interview questions to GPT-5.6 Sol. GPT-6 Astra is reserved for leadership and HR-style behavioral questions. Independent questions do not inherit previous answers; explicit follow-ups retain the two recent exchanges needed for chained SQL corrections. Direct technical answers use 25–55 words, project examples 50–80 words, and requested scripts include only the essential technique, condition, and minimal code. The prompt treats supplied project facts as exact evidence and forbids embellishing, generic technology substitution, or project mixing.
 
 Validation includes frontend unit and real-handler simulated-bridge tests, backend request/stream tests including five-minute audio, production build, live transcription-to-code smoke test, and phone-browser layout checks. Physical ring and glasses operation still requires wearer testing. v0.7.1 also excludes obsolete saved startup instructions from answer-history migration.

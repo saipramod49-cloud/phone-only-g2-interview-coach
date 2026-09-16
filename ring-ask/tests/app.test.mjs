@@ -79,6 +79,26 @@ test('app menu foreground return rebuilds the lens and both layouts use question
  }finally{a.dispose();}
 });
 
+test('lens menu puts Start listening before Resume and both force control recovery',async()=>{
+ const a=await app();try{
+  const menu=a.pages.at(-1).menuObject.menuItems;
+  assert.equal(menu.map(item=>item.itemName).join('|'),'Start listening|Resume Ring Ask|Previous answer|Current answer');
+  a.event({sysEvent:{eventType:7}});await delay(20);
+  const before=a.pages.length;a.event({menuItemClickEvent:{itemID:2}});await delay(80);
+  assert.ok(a.pages.length>before);assert.deepEqual(a.mic,[false]);
+  a.event({sysEvent:{eventType:7}});await delay(20);a.event({menuItemClickEvent:{itemID:1}});await delay(80);
+  assert.deepEqual(a.mic,[false,false,false,true]);
+  a.ids.get('cancel').onclick();await delay(20);
+ }finally{a.dispose();}
+});
+
+test('returning from the glasses system menu always rebuilds ring capture',async()=>{
+ const a=await app();try{
+  const before=a.pages.length;a.event({sysEvent:{eventType:5}});await delay(20);a.event({sysEvent:{eventType:4}});await delay(80);
+  assert.ok(a.pages.length>before);assert.equal(a.ids.get('restore-listen').hidden,true);
+ }finally{a.dispose();}
+});
+
 test('system-menu exit recovers on the next ring input without reopening the phone app',async()=>{
  const a=await app();try{
   a.ids.get('demo').onclick();

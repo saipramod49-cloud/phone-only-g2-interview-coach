@@ -78,7 +78,7 @@ function render(){
  el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';
  dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},reading.font==='native'?100:350);
 }
-function ringMenu(){return new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:'Resume Ring Ask',itemID:1}),new MenuItemProperty({itemName:'Previous answer',itemID:2}),new MenuItemProperty({itemName:'Current answer',itemID:3})]});}
+function ringMenu(){return new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:'Start listening',itemID:1}),new MenuItemProperty({itemName:'Resume Ring Ask',itemID:2}),new MenuItemProperty({itemName:'Previous answer',itemID:3}),new MenuItemProperty({itemName:'Current answer',itemID:4})]});}
 function pageDefinition(){
  const f=frame(),custom=reading.font!=='native';
  if(custom)return {containerTotalNum:5,menuObject:ringMenu(),textObject:[new TextContainerProperty({containerID:1,containerName:'input',xPosition:0,yPosition:0,width:576,height:288,paddingLength:0,isEventCapture:1,content:'',zOrderIndex:0})],imageObject:imageContainers()};
@@ -113,6 +113,17 @@ async function connect(){
 }
 function suspend(closed=false){backgrounded=true;screenReady=false;if(closed){active=false;created=false;}ringInput.reset();void recorder.dispatch(5);status='Glasses controls paused';el('connection').textContent='Restore controls from phone';persist();render();}
 function resume(){active=true;backgrounded=false;recoveryAttempts=0;if(!screenReady)void connect();render();}
+async function restoreLensControls(startListening=false){
+ if(startListening&&['busy','stopping'].includes(recorder.state))return;
+ if(startListening&&!token.value.trim()){status='Enter your bridge token in Agent connection';render();return;}
+ status=startListening?'Restoring controls & microphone…':'Restoring glasses controls…';
+ active=true;backgrounded=false;recoveryAttempts=0;screenReady=false;ringInput.reset();lastPaint='';
+ if(startListening||['starting','listening','stopping'].includes(recorder.state))await recorder.dispatch(5);
+ await connect();
+ if(!screenReady){status='Could not restore glasses controls. Open this lens menu and try again.';render();return;}
+ if(startListening){recorder.mode=listenMode;await recorder.dispatch(listenMode==='hold'?9:0);}
+ else{status='Ready';render();}
+}
 async function recoverFromInput(types:number[]){
  active=true;backgrounded=false;recoveryAttempts=0;created=false;screenReady=false;ringInput.reset();
  await connect();
@@ -120,21 +131,19 @@ async function recoverFromInput(types:number[]){
  for(const type of types){el('input-status').textContent=`Wake input ${++inputCount}: ${type}`;ringInput.feed(type);}
 }
 async function restoreAndListen(){
- if(['busy','stopping'].includes(recorder.state))return;
- if(!token.value.trim()){status='Enter your bridge token in Agent connection';render();return;}
- status='Restoring glasses controls…';el('connection').textContent='Restoring glasses…';render();
- await recorder.dispatch(5);active=true;backgrounded=false;recoveryAttempts=0;created=false;screenReady=false;ringInput.reset();
- await connect();
- if(!screenReady){status='Could not restore glasses. Keep Ring Ask open and try again.';render();return;}
- recorder.mode=listenMode;
- await recorder.dispatch(listenMode==='hold'?9:0);
+ el('connection').textContent='Restoring glasses…';render();
+ await restoreLensControls(true);
 }
 function subscribe(){
  bridge!.onEvenHubEvent(event=>{
   if(event.audioEvent){lastAudioAt=Date.now();recorder.audio(event.audioEvent.audioPcm);}
-  const menu=event.menuItemClickEvent?.itemID;if(menu){resume();if(menu===2)navigateHistory(-1);if(menu===3){history.latest();showDraft=!!draft?.answer;render();}return;}
+  const menu=event.menuItemClickEvent?.itemID;if(menu){
+   if(menu===1){void restoreLensControls(true);return;}
+   if(menu===2){void restoreLensControls(false);return;}
+   resume();if(menu===3)navigateHistory(-1);if(menu===4){history.latest();showDraft=!!draft?.answer;render();}return;
+  }
   const system=event.sysEvent?.eventType;
-  if(system===4){resume();return;}if(system===5){suspend();return;}if(system===6||system===7){suspend(true);return;}
+  if(system===4){void restoreLensControls(false);return;}if(system===5){suspend();return;}if(system===6||system===7){suspend(true);return;}
   const types=gestures(event);
   if(types.length&&(!active||backgrounded||!screenReady)){void recoverFromInput(types);return;}
   for(const type of types){el('input-status').textContent=`Input ${++inputCount}: ${type} · ${recorder.state}`;ringInput.feed(type);}
