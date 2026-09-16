@@ -45,12 +45,14 @@ test('app double tap changes page without microphone and swipes restore old/curr
   a.event({textEvent:{eventType:2}});assert.match(a.ids.get('question').textContent,/website events/);
  }finally{a.dispose();}
 });
-test('app triple tap returns to the previous page without microphone',async()=>{
+test('app triple tap blanks and restores the lens without losing ring capture',async()=>{
  const a=await app();try{
   a.ids.get('demo').onclick();a.event({textEvent:{}});await delay(80);a.event({sysEvent:{eventType:3}});await delay(500);
   assert.match(a.ids.get('page').textContent,/Page 2\//);
   a.event({textEvent:{}});await delay(80);a.event({sysEvent:{eventType:3}});await delay(80);a.event({textEvent:{}});await delay(500);
-  assert.match(a.ids.get('page').textContent,/Page 1\//);assert.deepEqual(a.mic,[]);
+  assert.equal(a.pages.at(-1).containerTotalNum,1);assert.equal(a.pages.at(-1).textObject[0].content,'');assert.equal(a.pages.at(-1).textObject[0].isEventCapture,1);
+  a.event({textEvent:{}});await delay(80);a.event({sysEvent:{eventType:3}});await delay(80);a.event({textEvent:{}});await delay(500);
+  assert.equal(a.pages.at(-1).containerTotalNum,3);assert.match(a.ids.get('page').textContent,/Page 2\//);assert.deepEqual(a.mic,[]);
  }finally{a.dispose();}
 });
 test('phone tap toggle and Stop button both submit; hold uses release',async()=>{

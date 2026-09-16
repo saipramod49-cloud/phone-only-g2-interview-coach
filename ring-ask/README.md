@@ -1,4 +1,4 @@
-# Ring Ask v0.7.8
+# Ring Ask v0.7.9
 
 Open [Ring Ask in Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), the [live Render app](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
 
@@ -6,7 +6,7 @@ Choose one listening mode in Listening & answer settings:
 
 - Tap mode: tap starts capture, the next deliberate tap stops and submits. Release does nothing.
 - Hold mode: hold throughout the question, release to submit. Both modes support up to five minutes.
-- Double tap opens the next answer page. Triple tap returns to the previous page. Neither gesture changes answer style or opens the microphone.
+- Double tap opens the next answer page. Triple tap blanks or restores the lens without opening the firmware menu, so Ring Ask retains ring event capture. Neither gesture changes answer style or opens the microphone.
 - Swipe up for older answers and down for newer/current answers. The last 30 completed answers are saved on this phone.
 
 Starting or cancelling a recording preserves the previous completed answer. The ring handler disambiguates single, double, and triple taps and accepts SDK input envelopes with an omitted zero event enum. Accidental holds in tap mode do not start capture. Returning from a system menu rebuilds the app display when the firmware sends the foreground event. The app cannot override firmware-owned controls or receive ring events after it has been closed.

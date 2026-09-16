@@ -17,7 +17,7 @@ test('double click cancels pending tap and repeated firmware event changes one p
  assert.deepEqual(actions,[3]);
  input.feed(0);c.advance(100);input.feed(3);c.advance(600);assert.deepEqual(actions,[3,3]);
 });
-test('third tap changes to previous page without leaking a single tap',()=>{
+test('third tap emits the dedicated lens-toggle action without leaking a single tap',()=>{
  const c=clock(),actions=[],input=new RingInput(t=>actions.push(t),c);
  input.feed(0);c.advance(80);input.feed(3);c.advance(80);input.feed(0);c.advance(600);
  assert.deepEqual(actions,[11]);

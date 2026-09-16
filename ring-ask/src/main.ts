@@ -8,6 +8,7 @@ const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
 const backend=el<HTMLInputElement>('backend'),token=el<HTMLInputElement>('token');
 let reading=readingSettings(),listenMode='tap',answerLayout='top',answerInstructions='',keepInstructions=false;
 let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,backgrounded=false,connecting=false,touched=false;
+let displayBlanked=false;
 let recoveryAttempts=0,status='Ready',recordStarted=0,lastAudioAt=0,inputCount=0;
 let layoutDirty=false,painting=false,dirty=false,lastPaint='',checking=false,apiReady=false;
 let paintTimer:ReturnType<typeof setTimeout>|undefined,recovering:ReturnType<typeof setTimeout>|undefined;
@@ -81,6 +82,7 @@ function render(){
 function ringMenu(){return new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:'Start listening',itemID:1}),new MenuItemProperty({itemName:'Resume Ring Ask',itemID:2}),new MenuItemProperty({itemName:'Previous answer',itemID:3}),new MenuItemProperty({itemName:'Current answer',itemID:4})]});}
 function pageDefinition(){
  const f=frame(),custom=reading.font!=='native';
+ if(displayBlanked)return {containerTotalNum:1,menuObject:ringMenu(),textObject:[new TextContainerProperty({containerID:1,containerName:'blank-input',xPosition:0,yPosition:0,width:576,height:288,paddingLength:0,isEventCapture:1,content:'',zOrderIndex:0})]};
  if(custom)return {containerTotalNum:5,menuObject:ringMenu(),textObject:[new TextContainerProperty({containerID:1,containerName:'input',xPosition:0,yPosition:0,width:576,height:288,paddingLength:0,isEventCapture:1,content:'',zOrderIndex:0})],imageObject:imageContainers()};
  return {containerTotalNum:3,menuObject:ringMenu(),textObject:[
   new TextContainerProperty({containerID:1,containerName:'header',xPosition:0,yPosition:0,width:576,height:32,paddingLength:2,isEventCapture:1,content:header(f)}),
@@ -91,6 +93,7 @@ async function paint(){
  if(painting||!bridge||!screenReady||!active||backgrounded)return;painting=true;
  try{while(dirty&&screenReady&&active&&!backgrounded){dirty=false;
   if(layoutDirty){layoutDirty=false;const ok=await deadline(bridge!.rebuildPageContainer(new RebuildPageContainer(pageDefinition())),6000);if(!ok)throw Error('Display rebuild failed');lastPaint='';bitmap.reset();}
+  if(displayBlanked){lastPaint='blank';continue;}
   const f=frame(),key=JSON.stringify([f,header(f)]);if(key===lastPaint)continue;
   if(reading.font!=='native')await bitmap.paintFrame(bridge,{...f,header:header(f)},reading.font);
   else for(const [id,name,content] of [[1,'header',header(f)],[2,'question',f.question],[3,'answer',f.answer]] as const){
@@ -151,6 +154,7 @@ function subscribe(){
  bridge!.onDeviceStatusChanged(device=>{if(device.isDisconnected()||device.isConnectionFailed()){screenReady=false;ringInput.reset();void recorder.dispatch(5);scheduleRecovery();}else if(device.isConnected())resume();});
 }
 function navigatePage(direction:number){const f=frame();history.page=direction>0?(f.page+1)%f.count:Math.max(0,f.page-1);render();}
+function toggleLensDisplay(){displayBlanked=!displayBlanked;layoutDirty=true;status=displayBlanked?'Lens blanked · triple tap to restore':'Ready';render();}
 function navigateHistory(direction:number){
  if(showDraft&&draft?.answer&&direction<0){showDraft=false;history.latest();}
  else if(direction>0&&history.isLatest&&draft?.answer){showDraft=true;history.page=0;}
@@ -159,7 +163,7 @@ function navigateHistory(direction:number){
 }
 function dispatch(type:number){
  if(!active||backgrounded)return;
- if(type===3){navigatePage(1);return;}if(type===11){navigatePage(-1);return;}if(type===1||type===2){navigateHistory(type===1?-1:1);return;}
+ if(type===3){navigatePage(1);return;}if(type===11){toggleLensDisplay();return;}if(type===1||type===2){navigateHistory(type===1?-1:1);return;}
  if(type===10){if(listenMode==='hold')void recorder.dispatch(10);return;}
  if((listenMode==='tap'&&type!==0)||(listenMode==='hold'&&type!==9))return;
  if(['busy','stopping'].includes(recorder.state))return;
