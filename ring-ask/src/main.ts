@@ -145,8 +145,10 @@ function subscribe(){
    if(menu===2){void restoreLensControls(false);return;}
    resume();if(menu===3)navigateHistory(-1);if(menu===4){history.latest();showDraft=!!draft?.answer;render();}return;
   }
-  const system=event.sysEvent?.eventType;
-  if(system===4){void restoreLensControls(false);return;}if(system===5){suspend();return;}if(system===6||system===7){suspend(true);return;}
+   const system=event.sysEvent?.eventType;
+   // 4/5 belong to the EvenOS contextual-menu overlay. The Ring Ask page stays
+   // mounted beneath it, so rebuilding or suspending here drops ring capture.
+   if(system===4||system===5)return;if(system===6||system===7){suspend(true);return;}
   const types=gestures(event);
   if(types.length&&(!active||backgrounded||!screenReady)){void recoverFromInput(types);return;}
   for(const type of types){el('input-status').textContent=`Input ${++inputCount}: ${type} · ${recorder.state}`;ringInput.feed(type);}

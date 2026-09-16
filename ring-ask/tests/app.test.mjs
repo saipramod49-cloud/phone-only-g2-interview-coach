@@ -73,9 +73,12 @@ test('ring hold release works and cancelled capture never erases saved answer',a
   a.event({sysEvent:{eventType:9}});await delay(10);a.event({audioEvent:{audioPcm:new Uint8Array(9600)}});a.event({sysEvent:{eventType:10}});await delay(30);assert.equal(a.requests.length,1);
  }finally{a.dispose();}
 });
-test('app menu foreground return rebuilds the lens and both layouts use question/answer panels',async()=>{
+test('contextual menu open and close preserve the mounted page and ring controls',async()=>{
  const a=await app();try{
-  a.event({sysEvent:{eventType:5}});await delay(10);a.event({sysEvent:{eventType:4}});await delay(30);assert.ok(a.pages.length>=2);
+  const before=a.pages.length;a.event({sysEvent:{eventType:4}});await delay(10);a.event({sysEvent:{eventType:5}});await delay(30);
+  assert.equal(a.pages.length,before);assert.equal(a.ids.get('restore-listen').hidden,true);
+  a.event({textEvent:{}});await delay(500);assert.deepEqual(a.mic,[true]);
+  a.ids.get('cancel').onclick();await delay(20);
   a.ids.get('answer-layout').value='side';a.ids.get('answer-layout').onchange();await delay(150);
   const p=a.pages.at(-1);assert.equal(p.textObject[1].containerName,'question');assert.equal(p.textObject[2].containerName,'answer');assert.ok(p.textObject[2].xPosition>p.textObject[1].xPosition);
  }finally{a.dispose();}
@@ -94,10 +97,10 @@ test('lens menu puts Start listening before Resume and both force control recove
  }finally{a.dispose();}
 });
 
-test('returning from the glasses system menu always rebuilds ring capture',async()=>{
+test('dismissing the glasses contextual menu does not suspend controls',async()=>{
  const a=await app();try{
-  const before=a.pages.length;a.event({sysEvent:{eventType:5}});await delay(20);a.event({sysEvent:{eventType:4}});await delay(80);
-  assert.ok(a.pages.length>before);assert.equal(a.ids.get('restore-listen').hidden,true);
+  const before=a.pages.length;a.event({sysEvent:{eventType:4}});await delay(20);a.event({sysEvent:{eventType:5}});await delay(80);
+  assert.equal(a.pages.length,before);assert.equal(a.ids.get('restore-listen').hidden,true);assert.deepEqual(a.mic,[]);
  }finally{a.dispose();}
 });
 
