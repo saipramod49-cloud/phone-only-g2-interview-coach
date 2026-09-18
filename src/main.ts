@@ -126,7 +126,33 @@ async function connect(){
    ws.send(new Uint8Array(pcm));
   },action:(type,direction)=>{
    if(type==='navigate'){if(menu.open)menu.move(direction??0);else {manualScroll();state.page+=direction??0;}render();}
-   if(type==='resume'){const action=menu.tap();if(action)runAction(action);render();}
+   if(type==='resume'){
+
+  // If an answer is already displayed and GPT-Live has paused
+  // the microphone, one normal ring click starts listening
+  // for the next interviewer question.
+  if(
+    !menu.open &&
+    active &&
+    !capture &&
+    !armed &&
+    !busy &&
+    phase==='paused' &&
+    state.answer
+  ){
+    next();
+    return;
+  }
+
+  // Otherwise keep the normal ring-menu behavior.
+  const action=menu.tap();
+
+  if(action){
+    runAction(action);
+  }
+
+  render();
+}
    if(type==='menu'){menu.open=true;render();}
    if(type==='back'){const handled=menu.back();render();return handled;}
    if(type==='end'){stop();enabledMic=false;g2=undefined;connecting=undefined;}
