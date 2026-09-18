@@ -1,8 +1,8 @@
 """
 GPT-Live experimental backend for Interview Lens.
 
-This module intentionally preserves the existing phone/G2 websocket
-protocol so the Even Hub frontend does not need to be rebuilt.
+This module preserves the existing phone/G2 websocket protocol so
+the Even Hub frontend does not need to be rebuilt.
 
 Flow:
 
@@ -11,7 +11,7 @@ G2 microphone
     -> GPT-Live-1
     -> semantic conversation understanding
     -> Responses delegation
-    -> GPT-5.6 Terra/Luna
+    -> backend reasoning model
     -> answer.delta
     -> G2 display
 
@@ -19,8 +19,7 @@ Enable by setting:
 
 OPENAI_LIVE_EXPERIMENT=1
 
-The existing backend/app/live.py remains untouched and can be restored
-simply by setting OPENAI_LIVE_EXPERIMENT=0.
+Set OPENAI_LIVE_EXPERIMENT=0 to restore backend/app/live.py.
 """
 
 from __future__ import annotations
@@ -70,13 +69,13 @@ BACKEND_MODEL = os.getenv(
 
 
 # ============================================================
-# GPT-LIVE PROMPT
+# GPT-LIVE LISTENING PROMPT
 # ============================================================
 
 LIVE_INSTRUCTIONS = """
 You are the listening layer for a technical interview assistant.
 
-Your most important job is to understand WHEN the interviewer has
+Your most important job is determining WHEN the interviewer has
 finished asking the complete question.
 
 The interviewer may:
@@ -85,7 +84,7 @@ The interviewer may:
 - pause for several seconds
 - tell a long story before asking the question
 - give multiple constraints
-- correct something they said earlier
+- correct something said earlier
 - ask several related subquestions
 - describe a production incident before asking what should be done
 - use technical terminology
@@ -93,24 +92,33 @@ The interviewer may:
 
 DO NOT treat a normal pause as the end of the question.
 
-DO NOT delegate while the interviewer is still giving the setup,
-scenario, constraints, examples, corrections, or background.
+DO NOT delegate while the interviewer is still giving:
+
+- setup
+- scenario
+- constraints
+- examples
+- corrections
+- background
 
 Wait until the complete actionable request is clear.
 
-For EVERY completed technical interview question, delegate the task
+For every completed technical interview question, delegate the task
 to the configured Responses backend.
 
 Do not answer substantive technical interview questions yourself.
+
 The backend agent provides the actual answer.
 
-The application displays the backend answer as text on smart glasses,
-so do not read the full backend answer aloud.
+The application displays that answer as text on smart glasses.
 
-After delegation, return to listening for the next complete question.
+Do not read the full answer aloud.
 
-If the speaker is merely thinking aloud, giving background, or has
-not yet reached an actionable request, continue listening.
+After delegation, wait until the application explicitly resumes
+microphone capture before treating new speech as another question.
+
+If the speaker is merely thinking aloud, providing background, or
+has not reached an actionable request yet, continue listening.
 
 Prefer waiting slightly longer over prematurely answering an
 incomplete question.
@@ -169,7 +177,7 @@ For scenario questions:
 1. identify what is probably happening
 2. explain how you would investigate it
 3. explain how you would fix it
-4. mention the important tradeoff or prevention step when relevant
+4. mention an important tradeoff or prevention step when relevant
 
 Do not ignore the final clause of a long question.
 
@@ -182,10 +190,12 @@ Use accurate production concepts where relevant, including:
 - BigQuery
 - GCS
 - Airflow
-- Spark / PySpark
+- Spark
+- PySpark
 - Dataproc
 - Dataflow
-- Kafka / Pub/Sub
+- Kafka
+- Pub/Sub
 - Snowflake
 - Databricks
 - SQL
@@ -204,8 +214,7 @@ Use accurate production concepts where relevant, including:
 - replay
 - transactional processing
 
-Do not force these technologies into an answer when they are not
-relevant.
+Do not force technologies into an answer when they are not relevant.
 
 LENGTH
 
@@ -215,8 +224,8 @@ roughly 70 to 130 words.
 For a complex scenario or multipart question:
 roughly 120 to 250 words.
 
-Do not make the answer artificially short if the interviewer asks a
-complex scenario.
+Do not make the answer artificially short when the interviewer asks
+a complex scenario.
 
 SMART-GLASSES FORMAT
 
@@ -232,7 +241,7 @@ Return only the answer that the candidate should say aloud.
 
 PERSONAL EXPERIENCE
 
-This experimental GPT-Live mode currently tests conversational
+This experimental GPT-Live mode currently focuses on conversational
 understanding and question completion.
 
 Do not invent personal employment incidents, metrics, achievements,
@@ -247,9 +256,6 @@ experience.
 
 # ============================================================
 # MODEL LIST ENDPOINT
-#
-# Existing phone frontend calls this endpoint. We keep it so
-# switching to GPT-Live does not break the model settings panel.
 # ============================================================
 
 @router.get("/api/models")
@@ -294,7 +300,7 @@ async def list_answer_models(
 
 
 # ============================================================
-# SAFE DIAGNOSTICS
+# SAFE PROVIDER ERROR DETAILS
 # ============================================================
 
 def safe_error_details(
@@ -345,7 +351,6 @@ async def open_gpt_live_session():
             "OPENAI_API_KEY is missing on Render"
         )
 
-    # Official GPT-Live primary websocket.
     connection = await websockets.connect(
         "wss://api.openai.com/v1/live/sessions",
 
@@ -358,7 +363,6 @@ async def open_gpt_live_session():
         ping_timeout=10,
         close_timeout=5,
 
-        # Keep enough room for provider events.
         max_size=4 * 1024 * 1024,
     )
 
@@ -377,11 +381,7 @@ async def open_gpt_live_session():
             "instructions":
                 LIVE_INSTRUCTIONS,
 
-            # G2 gives us PCM16 mono at 16 kHz.
-            #
-            # GPT-Live officially supports 16 kHz PCM,
-            # therefore we don't need the old 16 -> 24 kHz
-            # audioop conversion.
+            # Even G2 microphone stream is PCM16 mono at 16 kHz.
             "audio": {
                 "format": {
                     "type":
@@ -391,8 +391,8 @@ async def open_gpt_live_session():
                         16000,
                 },
 
-                # GPT-Live is a voice model, although our
-                # G2 experiment ignores returned audio.
+                # We ignore returned speech audio because answers
+                # are shown as text on the G2 display.
                 "output": {
                     "voice":
                         "marin",
@@ -415,7 +415,6 @@ async def open_gpt_live_session():
                 },
             },
 
-            # We do not need stored recordings for this test.
             "store":
                 False,
         },
@@ -497,7 +496,7 @@ async def open_gpt_live_session():
 
 
 # ============================================================
-# LIVE WEBSOCKET USED BY EXISTING EVEN APP
+# LIVE WEBSOCKET USED BY EVEN INTERVIEW LENS
 # ============================================================
 
 @router.websocket(
@@ -514,8 +513,6 @@ async def live(
 
     send_lock = asyncio.Lock()
 
-    # Shared state between the G2 websocket loop and
-    # the GPT-Live event reader.
     state = {
         "authenticated":
             False,
@@ -529,8 +526,8 @@ async def live(
         "transcript":
             "",
 
-        # Transcript timestamps before this point belong
-        # to a question we've already processed.
+        # Transcript fragments before this timestamp belong to
+        # the question that has already been processed.
         "cut_ms":
             -1,
 
@@ -543,6 +540,9 @@ async def live(
         "answer_started":
             set(),
 
+        "first_text_ms":
+            {},
+
         "question":
             {},
 
@@ -552,6 +552,11 @@ async def live(
         "coach_instructions":
             "",
     }
+
+
+    # ========================================================
+    # SEND EVENT TO PHONE / G2
+    # ========================================================
 
     async def send(
         kind: str,
@@ -570,9 +575,9 @@ async def live(
             )
 
 
-    # --------------------------------------------------------
-    # Connect to GPT-Live only when microphone capture starts.
-    # --------------------------------------------------------
+    # ========================================================
+    # OPEN OPENAI LIVE CONNECTION
+    # ========================================================
 
     async def ensure_openai():
 
@@ -604,12 +609,9 @@ async def live(
         )
 
 
-    # --------------------------------------------------------
-    # Pause GPT-Live input.
-    #
-    # We use the official mute command rather than closing
-    # the entire session, preserving conversational context.
-    # --------------------------------------------------------
+    # ========================================================
+    # MUTE / UNMUTE GPT-LIVE INPUT
+    # ========================================================
 
     async def mute_openai():
 
@@ -632,7 +634,9 @@ async def live(
             )
         )
 
-        state["muted"] = True
+        state[
+            "muted"
+        ] = True
 
 
     async def unmute_openai():
@@ -656,19 +660,36 @@ async def live(
             )
         )
 
-        state["muted"] = False
+        state[
+            "muted"
+        ] = False
 
 
-    # --------------------------------------------------------
-    # Tell Responses backend to answer immediately.
-    #
-    # This is used by the existing
-    # "Answer captured question" button.
-    # --------------------------------------------------------
+    # ========================================================
+    # MANUAL "ANSWER CAPTURED QUESTION"
+    # ========================================================
 
     async def force_answer():
 
         await ensure_openai()
+
+        # Stop listening before asking for an answer.
+        #
+        # This prevents candidate speech from immediately
+        # becoming a new interviewer question.
+        state[
+            "listening"
+        ] = False
+
+        await send(
+            "capture",
+            active=False,
+        )
+
+        with suppress(
+            Exception
+        ):
+            await mute_openai()
 
         await openai.send(
             json.dumps(
@@ -685,13 +706,14 @@ async def live(
 
         await send(
             "flow",
-            phase="generating",
+            phase=
+                "generating",
         )
 
 
-    # --------------------------------------------------------
-    # GPT-Live event reader
-    # --------------------------------------------------------
+    # ========================================================
+    # READ GPT-LIVE EVENTS
+    # ========================================================
 
     async def read_openai():
 
@@ -711,9 +733,9 @@ async def live(
                 )
 
 
-                # ------------------------------------------
-                # Provider error
-                # ------------------------------------------
+                # =================================================
+                # PROVIDER ERROR
+                # =================================================
 
                 if kind == "error":
 
@@ -733,30 +755,41 @@ async def live(
 
                     await send(
                         "error",
-                        keep_capture=True,
+                        keep_capture=
+                            state[
+                                "listening"
+                            ],
+
                         recoverable=True,
+
                         message=(
                             "GPT-Live reported an error. "
-                            "Check Render logs for the safe diagnostic."
+                            "Check Render logs."
                         ),
                     )
 
                     continue
 
 
-                # ------------------------------------------
-                # GPT-Live user speech transcript
-                #
-                # These are fragments, NOT completed turns.
-                # GPT-Live itself decides when the semantic
-                # question is ready for delegation.
-                # ------------------------------------------
+                # =================================================
+                # LIVE INPUT TRANSCRIPT
+                # =================================================
 
                 if (
                     kind
                     ==
                     "session.input_transcript.delta"
                 ):
+
+                    # Important:
+                    #
+                    # Once delegation happens listening becomes False.
+                    # Therefore any delayed transcription events arriving
+                    # while the candidate reads the answer are ignored.
+                    if not state[
+                        "listening"
+                    ]:
+                        continue
 
                     delta = event.get(
                         "delta",
@@ -770,8 +803,6 @@ async def live(
                         "end_ms"
                     )
 
-                    # Ignore a late transcript fragment from
-                    # an already processed question.
                     if (
                         isinstance(
                             end_ms,
@@ -780,7 +811,9 @@ async def live(
                         and
                         end_ms
                         <=
-                        state["cut_ms"]
+                        state[
+                            "cut_ms"
+                        ]
                     ):
                         continue
 
@@ -788,8 +821,7 @@ async def live(
                         "transcript"
                     ] += delta
 
-                    # Prevent unbounded growth if somebody
-                    # leaves the microphone open for hours.
+                    # Avoid unlimited transcript growth.
                     if (
                         len(
                             state[
@@ -807,6 +839,7 @@ async def live(
 
                     await send(
                         "transcript.partial",
+
                         text=
                             state[
                                 "transcript"
@@ -816,20 +849,9 @@ async def live(
                     continue
 
 
-                # ------------------------------------------
-                # GPT-Live decided that there is now enough
-                # semantic information to perform a task.
-                #
-                # THIS replaces the old:
-                #
-                # silence timeout
-                #     ->
-                # transcription completion
-                #     ->
-                # assess_turn()
-                #
-                # flow.
-                # ------------------------------------------
+                # =================================================
+                # SEMANTIC QUESTION COMPLETE
+                # =================================================
 
                 if (
                     kind
@@ -885,11 +907,13 @@ async def live(
                             "cut_ms"
                         ] = offset_ms
 
+
                     state[
                         "question"
                     ][
                         delegation_id
                     ] = question
+
 
                     state[
                         "delegation_started"
@@ -897,48 +921,73 @@ async def live(
                         delegation_id
                     ] = time.monotonic()
 
+
                     state[
                         "answer_text"
                     ][
                         delegation_id
                     ] = ""
 
-                    # Clear the visible transcript for the
-                    # next question. Late fragments belonging
-                    # to the previous question are filtered
-                    # using cut_ms above.
-            # Clear transcript for the completed question.
-                    state["transcript"] = ""
 
-# IMPORTANT:
-# Once a complete interview question has been detected,
-# stop microphone capture while the candidate reads the answer.
-#
-# Otherwise the candidate's own voice becomes a new question
-# and replaces the answer on the glasses.
-state["listening"] = False
+                    # ============================================
+                    # CRITICAL FIX
+                    #
+                    # Stop listening immediately once GPT-Live
+                    # decides the interviewer finished the question.
+                    #
+                    # Otherwise the candidate begins reading the
+                    # generated answer, the microphones hear that
+                    # speech, and the UI replaces the answer with
+                    # another QUESTION · LIVE transcript.
+                    # ============================================
 
-await send(
-    "capture",
-    active=False,
-)
+                    state[
+                        "listening"
+                    ] = False
 
-with suppress(Exception):
-    await mute_openai()
+                    state[
+                        "transcript"
+                    ] = ""
 
-await send(
-    "transcript.final",
-    text=(
-        question
-        or
-        "GPT-Live detected a complete question."
-    ),
-)
+                    await send(
+                        "capture",
+                        active=False,
+                    )
 
-await send(
-    "flow",
-    phase="generating",
-)
+                    # Tell GPT-Live not to process more microphone
+                    # audio during answer reading.
+                    with suppress(
+                        Exception
+                    ):
+                        await mute_openai()
+
+
+                    await send(
+                        "transcript.final",
+
+                        text=(
+                            question
+                            or
+                            "GPT-Live detected a complete question."
+                        ),
+                    )
+
+
+                    await send(
+                        "flow",
+                        phase=
+                            "generating",
+                    )
+
+
+                    await send(
+                        "state",
+                        message=(
+                            "Question complete · microphone paused "
+                            "while you read the answer"
+                        ),
+                    )
+
 
                     print(
                         "GPT_LIVE_DELEGATED",
@@ -949,10 +998,9 @@ await send(
                     continue
 
 
-                # ------------------------------------------
-                # Responses backend events are wrapped
-                # inside response.event.
-                # ------------------------------------------
+                # =================================================
+                # RESPONSES DELEGATION EVENTS
+                # =================================================
 
                 if (
                     kind
@@ -985,9 +1033,9 @@ await send(
                     )
 
 
-                    # --------------------------------------
-                    # Stream backend text directly to G2.
-                    # --------------------------------------
+                    # =============================================
+                    # FIRST / STREAMING TEXT
+                    # =============================================
 
                     if (
                         inner_kind
@@ -1003,9 +1051,11 @@ await send(
                         if not delta:
                             continue
 
+
                         answer_id = (
                             delegation_id
                         )
+
 
                         if (
                             delegation_id
@@ -1030,6 +1080,37 @@ await send(
                                 )
                             )
 
+                            started = (
+                                state[
+                                    "delegation_started"
+                                ].get(
+                                    delegation_id
+                                )
+                            )
+
+                            first_text_ms = None
+
+                            if started:
+
+                                first_text_ms = round(
+                                    (
+                                        time.monotonic()
+                                        -
+                                        started
+                                    )
+                                    *
+                                    1000
+                                )
+
+                            state[
+                                "first_text_ms"
+                            ][
+                                delegation_id
+                            ] = (
+                                first_text_ms
+                            )
+
+
                             await send(
                                 "answer.start",
 
@@ -1045,6 +1126,7 @@ await send(
                                 reasoning=
                                     "GPT-Live delegation",
                             )
+
 
                         current = (
                             state[
@@ -1063,27 +1145,6 @@ await send(
                             delegation_id
                         ] = current
 
-                        started = (
-                            state[
-                                "delegation_started"
-                            ].get(
-                                delegation_id
-                            )
-                        )
-
-                        first_text_ms = None
-
-                        if started:
-
-                            first_text_ms = round(
-                                (
-                                    time.monotonic()
-                                    -
-                                    started
-                                )
-                                *
-                                1000
-                            )
 
                         await send(
                             "answer.delta",
@@ -1095,15 +1156,19 @@ await send(
                                 delta,
 
                             first_text_ms=
-                                first_text_ms,
+                                state[
+                                    "first_text_ms"
+                                ].get(
+                                    delegation_id
+                                ),
                         )
 
                         continue
 
 
-                    # --------------------------------------
-                    # Backend response finished.
-                    # --------------------------------------
+                    # =============================================
+                    # RESPONSE COMPLETED
+                    # =============================================
 
                     if (
                         inner_kind
@@ -1146,9 +1211,7 @@ await send(
                                 1000
                             )
 
-                        # In case the Responses backend
-                        # somehow completes without a delta,
-                        # avoid wiping the existing lens frame.
+
                         if full:
 
                             await send(
@@ -1161,23 +1224,39 @@ await send(
                                     full,
 
                                 first_text_ms=
-                                    None,
+                                    state[
+                                        "first_text_ms"
+                                    ].get(
+                                        delegation_id
+                                    ),
 
                                 total_ms=
                                     total_ms,
                             )
 
+
+                        # IMPORTANT:
+                        #
+                        # We deliberately remain PAUSED here.
+                        #
+                        # Do not automatically switch back to listening.
+                        # The candidate may still be reading the answer.
                         await send(
                             "flow",
-                            phase=(
-                                "listening"
-                                if state[
-                                    "listening"
-                                ]
-                                else
-                                "paused"
+                            phase=
+                                "paused",
+                        )
+
+
+                        await send(
+                            "state",
+                            message=(
+                                "Answer ready · microphone paused · "
+                                "tap Resume question listening for "
+                                "the next question"
                             ),
                         )
+
 
                         print(
                             "GPT_LIVE_RESPONSE_DONE",
@@ -1189,9 +1268,9 @@ await send(
                         continue
 
 
-                    # --------------------------------------
-                    # Responses backend failed.
-                    # --------------------------------------
+                    # =============================================
+                    # RESPONSE FAILED
+                    # =============================================
 
                     if inner_kind in (
                         "response.failed",
@@ -1200,24 +1279,25 @@ await send(
 
                         await send(
                             "error",
-                            keep_capture=True,
-                            recoverable=True,
+
+                            keep_capture=
+                                False,
+
+                            recoverable=
+                                True,
+
                             message=(
                                 "The delegated answer did not complete. "
-                                "Repeat the question or use Retry."
+                                "Use Retry or resume listening."
                             ),
                         )
 
                         continue
 
 
-                # ------------------------------------------
-                # GPT-Live may produce voice output.
-                #
-                # We intentionally ignore returned audio
-                # because Even G2 is being used as a
-                # text-display assistant.
-                # ------------------------------------------
+                # =================================================
+                # IGNORE VOICE OUTPUT
+                # =================================================
 
                 if (
                     kind
@@ -1227,10 +1307,6 @@ await send(
                     continue
 
 
-                # We also don't display the GPT-Live spoken
-                # transcript because the delegated Responses
-                # answer above is the richer answer we want
-                # on the glasses.
                 if (
                     kind
                     ==
@@ -1238,6 +1314,10 @@ await send(
                 ):
                     continue
 
+
+                # =================================================
+                # OPENAI SESSION CLOSED
+                # =================================================
 
                 if (
                     kind
@@ -1254,7 +1334,9 @@ await send(
 
 
         except asyncio.CancelledError:
+
             raise
+
 
         except Exception as error:
 
@@ -1272,8 +1354,13 @@ await send(
 
                 await send(
                     "error",
-                    keep_capture=False,
-                    recoverable=True,
+
+                    keep_capture=
+                        False,
+
+                    recoverable=
+                        True,
+
                     message=(
                         "GPT-Live disconnected. "
                         "Reconnect and start practice again."
@@ -1287,9 +1374,9 @@ await send(
 
     try:
 
-        # ----------------------------------------------------
-        # Authentication
-        # ----------------------------------------------------
+        # ====================================================
+        # AUTHENTICATION
+        # ====================================================
 
         hello = await asyncio.wait_for(
             ws.receive_json(),
@@ -1351,8 +1438,7 @@ await send(
         ] = True
 
 
-        # Existing phone frontend specifically checks that
-        # "natural_flow" exists.
+        # Existing frontend expects natural_flow.
         await send(
             "ready",
 
@@ -1360,7 +1446,7 @@ await send(
                 1,
 
             build=
-                "0.3.0-gpt-live",
+                "0.3.1-gpt-live",
 
             features=[
                 "continuous_questions",
@@ -1370,13 +1456,14 @@ await send(
                 "coach_instructions",
                 "natural_flow",
                 "gpt_live_1",
+                "pause_during_answer",
             ],
         )
 
 
-        # ----------------------------------------------------
-        # Main G2/phone receive loop
-        # ----------------------------------------------------
+        # ====================================================
+        # MAIN PHONE / G2 LOOP
+        # ====================================================
 
         while True:
 
@@ -1393,7 +1480,7 @@ await send(
 
 
             # =================================================
-            # RAW G2 AUDIO
+            # RAW G2 MICROPHONE AUDIO
             # =================================================
 
             audio = event.get(
@@ -1402,6 +1489,7 @@ await send(
 
             if audio is not None:
 
+                # Ignore microphone packets while paused.
                 if (
                     not
                     state[
@@ -1415,10 +1503,7 @@ await send(
                     continue
 
 
-                # Existing G2 stream should already contain
-                # complete signed 16-bit PCM samples.
-                #
-                # GPT-Live requires an even number of bytes.
+                # PCM16 must contain complete 2-byte samples.
                 if (
                     len(
                         audio
@@ -1426,24 +1511,17 @@ await send(
                     %
                     2
                 ):
-
-                    # Dropping a single malformed final byte
-                    # is safer than sending an invalid PCM
-                    # sample to OpenAI.
-                    audio = audio[:-1]
+                    audio = (
+                        audio[:-1]
+                    )
 
 
                 if not audio:
                     continue
 
 
-                # Optional speaker filter.
-                #
-                # If the phone explicitly knows this is the
-                # candidate speaking, do not send that audio
-                # to GPT-Live as a new interviewer question.
-                #
-                # Unknown/default audio is still forwarded.
+                # If Even identifies the wearer/candidate,
+                # do not treat their speech as interviewer audio.
                 if (
                     state[
                         "speaker"
@@ -1484,7 +1562,7 @@ await send(
 
 
             # =================================================
-            # JSON CONTROL FROM PHONE
+            # JSON CONTROL MESSAGE
             # =================================================
 
             raw = event.get(
@@ -1496,7 +1574,9 @@ await send(
                 continue
 
 
-            if len(raw) > 16384:
+            if len(
+                raw
+            ) > 16384:
 
                 await ws.close(
                     code=1009
@@ -1521,9 +1601,9 @@ await send(
             )
 
 
-            # ------------------------------------------------
-            # Ping
-            # ------------------------------------------------
+            # =================================================
+            # PING
+            # =================================================
 
             if kind == "ping":
 
@@ -1534,9 +1614,9 @@ await send(
                 continue
 
 
-            # ------------------------------------------------
-            # Speaker estimate from Even app
-            # ------------------------------------------------
+            # =================================================
+            # SPEAKER ROLE ESTIMATE
+            # =================================================
 
             if kind == "speaker":
 
@@ -1557,12 +1637,9 @@ await send(
                 continue
 
 
-            # ------------------------------------------------
-            # Coach instructions
-            #
-            # Stored so a later personalized version can feed
-            # them into session.update.
-            # ------------------------------------------------
+            # =================================================
+            # USER COACH INSTRUCTIONS
+            # =================================================
 
             if (
                 kind
@@ -1582,27 +1659,33 @@ await send(
 
                     text = ""
 
-                text = text[:4000]
+                text = text[
+                    :4000
+                ]
 
                 state[
                     "coach_instructions"
                 ] = text
 
+
                 await send(
                     "coach.instructions.saved",
+
                     active=
                         bool(
                             text.strip()
                         ),
+
                     characters=
-                        len(text),
+                        len(
+                            text
+                        ),
                 )
 
                 continue
 
 
-            # Existing frontend sends this while switching
-            # voice-follow display modes.
+            # Voice-follow mode is currently handled on phone.
             if (
                 kind
                 ==
@@ -1611,24 +1694,17 @@ await send(
                 continue
 
 
-            # ------------------------------------------------
+            # =================================================
             # SETTINGS
-            #
-            # For this first experiment we deliberately keep
-            # GPT-Live backend model controlled by Render:
-            #
-            # OPENAI_LIVE_BACKEND_MODEL
-            #
-            # This avoids accidentally selecting a model that
-            # is incompatible with Live Responses delegation.
-            # ------------------------------------------------
+            # =================================================
 
             if kind == "settings":
 
                 await send(
                     "state",
+
                     message=(
-                        "GPT-Live test active · backend "
+                        "GPT-Live active · backend "
                         + BACKEND_MODEL
                     ),
                 )
@@ -1636,13 +1712,27 @@ await send(
                 continue
 
 
-            # ------------------------------------------------
+            # =================================================
             # START / RESUME LISTENING
-            # ------------------------------------------------
+            # =================================================
 
             if kind == "listen":
 
                 await ensure_openai()
+
+                # Clear old question transcript before listening
+                # for the next interviewer question.
+                state[
+                    "transcript"
+                ] = ""
+
+                state[
+                    "speaker"
+                ] = (
+                    state[
+                        "speaker"
+                    ]
+                )
 
                 await unmute_openai()
 
@@ -1650,10 +1740,12 @@ await send(
                     "listening"
                 ] = True
 
+
                 await send(
                     "capture",
                     active=True,
                 )
+
 
                 await send(
                     "flow",
@@ -1661,10 +1753,12 @@ await send(
                         "listening",
                 )
 
+
                 await send(
                     "state",
+
                     message=(
-                        "GPT-Live listening — speak the "
+                        "GPT-Live listening · ask the next "
                         "complete question naturally"
                     ),
                 )
@@ -1672,9 +1766,9 @@ await send(
                 continue
 
 
-            # ------------------------------------------------
-            # PAUSE
-            # ------------------------------------------------
+            # =================================================
+            # PAUSE MICROPHONE
+            # =================================================
 
             if kind == "pause":
 
@@ -1682,12 +1776,17 @@ await send(
                     "listening"
                 ] = False
 
-                await mute_openai()
+                with suppress(
+                    Exception
+                ):
+                    await mute_openai()
+
 
                 await send(
                     "capture",
                     active=False,
                 )
+
 
                 await send(
                     "flow",
@@ -1698,9 +1797,9 @@ await send(
                 continue
 
 
-            # ------------------------------------------------
-            # FORCE QUESTION COMPLETION
-            # ------------------------------------------------
+            # =================================================
+            # FORCE ANSWER
+            # =================================================
 
             if kind == "finish":
 
@@ -1709,13 +1808,9 @@ await send(
                 continue
 
 
-            # ------------------------------------------------
-            # RETRY
-            #
-            # response.create asks the configured Responses
-            # backend to produce/continue work from current
-            # Live conversational context.
-            # ------------------------------------------------
+            # =================================================
+            # RETRY ANSWER
+            # =================================================
 
             if kind == "retry":
 
@@ -1724,9 +1819,9 @@ await send(
                 continue
 
 
-            # ------------------------------------------------
-            # CLEAR VISIBLE QUESTION
-            # ------------------------------------------------
+            # =================================================
+            # CLEAR CAPTURED QUESTION
+            # =================================================
 
             if (
                 kind
@@ -1738,13 +1833,16 @@ await send(
                     "transcript"
                 ] = ""
 
+
                 await send(
                     "transcript.partial",
                     text="",
                 )
 
+
                 await send(
                     "flow",
+
                     phase=(
                         "listening"
                         if state[
@@ -1782,7 +1880,10 @@ await send(
 
             await send(
                 "error",
-                keep_capture=False,
+
+                keep_capture=
+                    False,
+
                 message=(
                     "Live connection failed. "
                     "Stop and start practice again."
@@ -1800,9 +1901,9 @@ await send(
             "listening"
         ] = False
 
+
         if openai is not None:
 
-            # Official graceful Live session finalization.
             with suppress(
                 Exception
             ):
@@ -1820,8 +1921,7 @@ await send(
                     )
                 )
 
-            # Give OpenAI a brief chance to emit
-            # session.closed before terminating socket.
+
             await asyncio.sleep(
                 0.15
             )
