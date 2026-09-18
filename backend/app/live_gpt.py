@@ -907,24 +907,38 @@ async def live(
                     # next question. Late fragments belonging
                     # to the previous question are filtered
                     # using cut_ms above.
-                    state[
-                        "transcript"
-                    ] = ""
+            # Clear transcript for the completed question.
+                    state["transcript"] = ""
 
-                    await send(
-                        "transcript.final",
-                        text=(
-                            question
-                            or
-                            "GPT-Live detected a complete question."
-                        ),
-                    )
+# IMPORTANT:
+# Once a complete interview question has been detected,
+# stop microphone capture while the candidate reads the answer.
+#
+# Otherwise the candidate's own voice becomes a new question
+# and replaces the answer on the glasses.
+state["listening"] = False
 
-                    await send(
-                        "flow",
-                        phase=
-                            "generating",
-                    )
+await send(
+    "capture",
+    active=False,
+)
+
+with suppress(Exception):
+    await mute_openai()
+
+await send(
+    "transcript.final",
+    text=(
+        question
+        or
+        "GPT-Live detected a complete question."
+    ),
+)
+
+await send(
+    "flow",
+    phase="generating",
+)
 
                     print(
                         "GPT_LIVE_DELEGATED",
