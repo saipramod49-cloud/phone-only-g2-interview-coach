@@ -2042,3 +2042,7 @@ else:
 app.include_router(
     live_router
 )
+
+# RING ASK LIVE ROUTER v1
+from .ring_live import router as ring_live_router
+app.include_router(ring_live_router)
