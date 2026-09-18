@@ -2009,6 +2009,36 @@ async function del(id) {
 '''
 
 
+# ============================================================
+# LIVE BACKEND SELECTION
+# ============================================================
 
-from .live import router as live_router
-app.include_router(live_router)
+if os.getenv(
+    "OPENAI_LIVE_EXPERIMENT",
+    "0",
+) == "1":
+
+    print(
+        "USING GPT-LIVE-1 BACKEND",
+        flush=True,
+    )
+
+    from .live_gpt import (
+        router as live_router,
+    )
+
+else:
+
+    print(
+        "USING EXISTING REALTIME BACKEND",
+        flush=True,
+    )
+
+    from .live import (
+        router as live_router,
+    )
+
+
+app.include_router(
+    live_router
+)
