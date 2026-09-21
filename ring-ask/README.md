@@ -1,4 +1,4 @@
-# Ring Ask v0.7.10
+# Ring Ask v0.8.0 GPT-Live beta
 
 Open [Ring Ask in Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), the [live Render app](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
 
@@ -16,6 +16,8 @@ Every answer page has a question and page/history status. Choose question above/
 There is one answer style, adapted to the request: readable conversational paragraphs, a matching flow for architecture where useful, and actual SQL/Python/PySpark code first when requested. Follow-ups retain conversation context. Resume and prep notes guide relevant answers without limiting help on unfamiliar stacks. Proposed experience uses conditional language rather than invented personal claims. The next-answer instruction box can refine answers without a deployment.
 
 Ring Ask defaults to GPT-6 Astra with low reasoning effort, independently of the legacy agent model. Set RING_MODEL to override. The authenticated /api/health reports the deployed model, prompt style, version, and recording limit. Measured latency varies with transcription, model service, network, and glasses rendering.
+
+v0.8.0 opens a server-owned GPT-Live 1 WebSocket before the glasses microphone starts and streams the E2's native mono PCM16 audio at 16 kHz. Ring Ask uses GPT-Live for incremental input transcription only; voice output is discarded and the existing grounded Ring Ask backend still creates the text shown on the lenses. Tap/hold capture remains explicit. If the Live session cannot start or finalize, the locally buffered recording automatically falls back to the previous `/api/ask` upload and transcription path. The OpenAI API key remains only in Render.
 
 Wake recovery in v0.7.8 is available inside the glasses menu. **Start listening** is the first plugin action, directly above **Resume Ring Ask**; it force-rebuilds ring capture and opens the glasses microphone. **Resume Ring Ask** force-rebuilds controls without recording, and returning from the system menu triggers that rebuild automatically.
 

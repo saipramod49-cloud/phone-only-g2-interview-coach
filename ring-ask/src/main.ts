@@ -1,5 +1,6 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,MenuContainerProperty,MenuItemProperty,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
 import {Recorder,gestures,recoveryDelay} from './controller.mjs';
+import {LiveQuestion} from './live.mjs';
 import {readingSettings,deadline,textWidth,emphasisParts} from './reader.mjs';
 import {AnswerHistory,RingInput,readingFrame} from './session.mjs';
 import {BitmapDisplay,imageContainers,measureFont} from './bitmap';
@@ -29,6 +30,7 @@ try{restore(JSON.parse(localStorage.getItem('ring-ask-settings')||'{}'));saved=J
 catch{restore({});}
 const history=new AnswerHistory(saved);
 function persist(){try{localStorage.setItem('ring-ask-history',JSON.stringify(history.entries));}catch{el('hint').textContent='Phone storage is full; history is kept for this session only.';}}
+const liveQuestion=new LiveQuestion();
 const recorder=new Recorder(async(on:boolean)=>{
  if(on&&(!bridge||!screenReady||backgrounded))throw new Error('Glasses reconnecting. Wait for Connected and try again.');
  if(!bridge)return true;
@@ -37,7 +39,18 @@ const recorder=new Recorder(async(on:boolean)=>{
 },(message:string|null)=>{
  if(message){status=message;if(message==='Listening'){recordStarted=Date.now();lastAudioAt=Date.now();}}
  if(recorder.state==='ready')recordStarted=0;render();
-},submit);
+},submit,{
+ start:async()=>{
+  status='Connecting GPT Live…';render();
+  const connected=await liveQuestion.start(backend.value.trim().replace(/\/$/,''),token.value.trim(),(event:any)=>{
+   if(event.type==='transcript.partial'&&event.text){draft={question:event.text,answer:''};status='Listening · live transcript';render();}
+   if(event.type==='error'){status='GPT Live unavailable · batch fallback ready';render();}
+  });
+  if(!connected){status='Listening · batch fallback';render();}
+ },
+ audio:(chunk:Uint8Array)=>liveQuestion.audio(chunk),
+ cancel:()=>liveQuestion.cancel()
+});
 recorder.mode=listenMode;
 const ringInput=new RingInput(dispatch);
 function captureStatus(){
@@ -180,11 +193,10 @@ async function submit(pcm:Uint8Array){
  draft={question:'',answer:''};showDraft=false;status='Sending question…';render();
  try{
   const instructions=answerInstructions.trim();
-  const response=await fetch(backend.value.replace(/\/$/,'')+'/api/ask',{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:`Bearer ${token.value.trim()}`,'X-Answer-Instructions':encodeURIComponent(instructions)},body:new Blob([new Uint8Array(pcm)]),signal:current.signal});
-  if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.error||`Server error ${response.status}`);}
   const consume=(line:string)=>{
    if(!line.trim()||serial!==requestSerial)return;const event=JSON.parse(line);
    if(event.type==='status')status=event.text;
+   if(event.type==='transcript.partial'){draft!.question=event.text;status='Finishing live transcript…';}
    if(event.type==='transcript'){draft!.question=event.text;status='Thinking…';el('timing').textContent=`Transcribed in ${(event.transcriptionMs/1000).toFixed(1)}s`;}
    if(event.type==='delta'){
     if(!first){first=performance.now();showDraft=true;history.page=0;el('timing').textContent=`First words ${((first-start)/1000).toFixed(1)}s`;}
@@ -200,10 +212,22 @@ async function submit(pcm:Uint8Array){
    }
    if(event.type==='error')throw Error(event.text);render();
   };
-  if(!response.body)throw Error('Streaming unavailable. Try again.');
-  const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
-  while(true){const chunk=await reader.read();if(chunk.done){buffer+=decoder.decode();break;}buffer+=decoder.decode(chunk.value,{stream:true});let pos;while((pos=buffer.indexOf('\n'))>=0){consume(buffer.slice(0,pos));buffer=buffer.slice(pos+1);}}
-  if(buffer.trim())consume(buffer);if(!done)throw Error('Answer interrupted. Retry last question.');
+  let liveFailed=false;
+  if(liveQuestion.ready){
+   status='Finishing GPT Live transcript…';render();
+   try{await liveQuestion.finish(instructions,(event:any)=>consume(JSON.stringify(event)));}
+   catch{liveFailed=true;}
+  }else liveFailed=true;
+  if(liveFailed&&!draft!.answer){
+   status='Using batch fallback…';draft={question:'',answer:''};render();
+   const response=await fetch(backend.value.replace(/\/$/,'')+'/api/ask',{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:`Bearer ${token.value.trim()}`,'X-Answer-Instructions':encodeURIComponent(instructions)},body:new Blob([new Uint8Array(pcm)]),signal:current.signal});
+   if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.error||`Server error ${response.status}`);}
+   if(!response.body)throw Error('Streaming unavailable. Try again.');
+   const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+   while(true){const chunk=await reader.read();if(chunk.done){buffer+=decoder.decode();break;}buffer+=decoder.decode(chunk.value,{stream:true});let pos;while((pos=buffer.indexOf('\n'))>=0){consume(buffer.slice(0,pos));buffer=buffer.slice(pos+1);}}
+   if(buffer.trim())consume(buffer);
+  }
+  if(!done)throw Error('Answer interrupted. Retry last question.');
  }catch(error){if(serial===requestSerial){draft=undefined;showDraft=false;status=current.signal.aborted?'Question stopped; previous answer restored':(error as Error).message;render();throw Error(status);}}
  finally{clearTimeout(timeout);if(abort===current)abort=undefined;}
 }
@@ -219,7 +243,7 @@ async function checkConnection(save:boolean){
   backend.value=backend.value.trim().replace(/\/$/,'');token.value=token.value.trim();if(!token.value)throw Error('Enter your existing bridge token.');
   const response=await fetch(backend.value+'/api/health',{headers:{Authorization:`Bearer ${token.value}`},signal:controller.signal});const result=await response.json();if(!response.ok||!result.configured)throw Error(result.error||'Server API key is not configured.');
   apiReady=true;if(save)await saveSettings();el<HTMLDetailsElement>('setup').open=false;
-  el('health').textContent=`Connected · ${result.model} · reasoning ${result.reasoning||'default'} · v${result.version}`;
+  el('health').textContent=`Connected · ${result.live_model||'batch audio'} → ${result.model} · reasoning ${result.reasoning||'default'} · v${result.version}`;
  }catch(error){apiReady=false;el('health').textContent=(error as Error).message;}finally{clearTimeout(timer);checking=false;el<HTMLButtonElement>('save').disabled=false;}
 }
 let recoveryPress=false;

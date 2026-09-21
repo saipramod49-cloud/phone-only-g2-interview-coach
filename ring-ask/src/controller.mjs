@@ -27,8 +27,8 @@ export function oldGestures(event) {
   return [...new Set(values.filter(value => value != null))];
 }
 export class Recorder {
-  constructor(mic, change, submit) {
-    this.mic=mic; this.change=change; this.submit=submit; this.state='ready'; this.mode='tap'; this.chunks=[]; this.bytes=0; this.held=false; this.queue=Promise.resolve();
+  constructor(mic, change, submit, lifecycle={}) {
+    this.mic=mic; this.change=change; this.submit=submit; this.lifecycle=lifecycle; this.state='ready'; this.mode='tap'; this.chunks=[]; this.bytes=0; this.held=false; this.queue=Promise.resolve();
   }
   dispatch(type) {
     this.queue = this.queue.then(async () => {
@@ -40,6 +40,7 @@ export class Recorder {
         this.held = type === 9;
         this.chunks = []; this.bytes = 0; this.state = 'starting'; this.change('Starting microphone…');
         try {
+          await this.lifecycle.start?.();
           if (!await this.mic(true)) throw new Error('Microphone unavailable. Check G2 connection and permission.');
           this.state = 'listening'; this.change('Listening');
           this.timer = setTimeout(() => { void this.dispatch(3); }, 300000);
@@ -68,11 +69,12 @@ export class Recorder {
   audio(chunk) {
     if (!['starting','listening','stopping'].includes(this.state)) return;
     const take = Math.min(chunk.length, MAX_BYTES - this.bytes);
-    if (take > 0) { this.chunks.push(chunk.slice(0,take)); this.bytes += take; }
+    if (take > 0) { const part=chunk.slice(0,take);this.chunks.push(part);this.bytes += take;this.lifecycle.audio?.(part); }
     if (this.bytes >= MAX_BYTES && this.state === 'listening') void this.dispatch(3);
   }
   async cancel() {
     ++this.job; clearTimeout(this.timer); this.held = false;
+    this.lifecycle.cancel?.();
     await this.mic(false).catch(() => false);
     this.chunks = []; this.bytes = 0; this.state = 'ready'; this.change('Ready');
   }
