@@ -44,9 +44,11 @@ const recorder=new Recorder(async(on:boolean)=>{
   status='Connecting GPT Live…';render();
   const connected=await liveQuestion.start(backend.value.trim().replace(/\/$/,''),token.value.trim(),(event:any)=>{
    if(event.type==='transcript.partial'&&event.text){draft={question:event.text,answer:''};status='Listening · live transcript';render();}
+   if(event.type==='capture'&&event.active===false&&recorder.state==='listening')void recorder.dispatch(3);
    if(event.type==='error'){status='GPT Live unavailable · batch fallback ready';render();}
   });
-  if(!connected){status='Listening · batch fallback';render();}
+  if(connected)liveQuestion.configure(answerInstructions.trim());
+  else{status='Listening · batch fallback';render();}
  },
  audio:(chunk:Uint8Array)=>liveQuestion.audio(chunk),
  cancel:()=>liveQuestion.cancel()

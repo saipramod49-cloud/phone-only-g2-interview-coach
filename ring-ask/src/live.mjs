@@ -8,7 +8,7 @@ export function liveEndpoint(backend) {
 }
 
 export class LiveQuestion {
-  constructor(socketFactory = url => new WebSocket(url), timeout = 12000) {
+  constructor(socketFactory = url => new WebSocket(url), timeout = 25000) {
     this.socketFactory = socketFactory;
     this.timeout = timeout;
     this.socket = null;
@@ -16,11 +16,15 @@ export class LiveQuestion {
     this.handler = null;
     this.finishResolve = null;
     this.finishReject = null;
+    this.pending = [];
+    this.answerStarted = false;
+    this.completed = false;
   }
 
   async start(backend, token, preview = _event => {}) {
     this.cancel();
     this.handler = preview;
+    this.pending = []; this.answerStarted = false; this.completed = false;
     let socket;
     try { socket = this.socketFactory(liveEndpoint(backend)); }
     catch { return false; }
@@ -38,17 +42,38 @@ export class LiveQuestion {
       socket.onmessage = message => {
         let event;
         try { event = JSON.parse(message.data); } catch { return; }
-        if (event.type === 'ready') { this.ready = true; finish(true); return; }
-        if (event.type === 'error') {
+        if (event.type === 'ready') {
+          socket.send(JSON.stringify({type:'listen'}));
+          return;
+        }
+        if (event.type === 'capture' && event.active === true && !this.ready) {
+          this.ready = true; finish(true); return;
+        }
+        if (event.type === 'answer.start') { this.answerStarted = true; return; }
+        const mapped = event.type === 'transcript.final'
+          ? {type:'transcript', text:event.text || '', transcriptionMs:0, source:'gpt-live-1'}
+          : event.type === 'answer.delta'
+            ? {type:'delta', text:event.text || ''}
+            : event.type === 'answer.done'
+              ? {type:'done', model:event.model || 'GPT-Live backend', transport:'gpt-live-1'}
+              : event.type === 'error'
+                ? {type:'error', text:event.message || event.text || 'GPT Live question failed.'}
+                : event;
+        if (mapped.type === 'error') {
           this.ready = false;
-          const error = new Error(event.text || 'GPT Live question failed.');
+          const error = new Error(mapped.text);
           if (this.finishReject) this.finishReject(error);
           this.finishResolve = null; this.finishReject = null; finish(false);
           return;
         }
-        this.handler?.(event);
-        if (event.type === 'done') {
-          this.finishResolve?.(true); this.finishResolve = null; this.finishReject = null;
+        if (!this.finishResolve && ['transcript','delta','done'].includes(mapped.type)) this.pending.push(mapped);
+        else this.handler?.(mapped);
+        if (mapped.type === 'done') {
+          this.completed = true;
+          if (this.finishResolve) {
+            this.finishResolve(true); this.finishResolve = null; this.finishReject = null;
+            try { socket.close(); } catch {}
+          }
         }
       };
       socket.onerror = () => { this.ready = false; finish(false); this.finishReject?.(new Error('GPT Live connection failed.')); };
@@ -64,11 +89,24 @@ export class LiveQuestion {
     if (this.ready && this.socket?.readyState === 1 && chunk?.length) this.socket.send(chunk.slice());
   }
 
+  configure(instructions) {
+    if (this.ready && this.socket?.readyState === 1 && instructions) {
+      this.socket.send(JSON.stringify({type:'coach.instructions', text:instructions}));
+    }
+  }
+
   async finish(instructions, handler) {
     if (!this.ready || this.socket?.readyState !== 1) return false;
     this.handler = handler;
     const result = new Promise((resolve, reject) => { this.finishResolve = resolve; this.finishReject = reject; });
-    this.socket.send(JSON.stringify({type:'finish', instructions}));
+    for (const event of this.pending.splice(0)) this.handler(event);
+    if (this.completed) {
+      this.finishResolve?.(true); this.finishResolve = null; this.finishReject = null;
+      try { this.socket.close(); } catch {}
+      return result;
+    }
+    this.configure(instructions);
+    if (!this.answerStarted) this.socket.send(JSON.stringify({type:'finish'}));
     return result;
   }
 

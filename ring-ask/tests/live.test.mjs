@@ -19,23 +19,34 @@ test('live question authenticates, streams PCM, and completes with server events
  const live=new LiveQuestion(()=>socket,1000);
  const starting=live.start('https://example.test','secret',event=>events.push(event));
  socket.open();assert.deepEqual(JSON.parse(socket.sent[0]),{type:'auth',token:'secret'});
- socket.receive({type:'ready',model:'gpt-live-1'});assert.equal(await starting,true);
- live.audio(new Uint8Array([1,2,3,4]));assert.deepEqual([...socket.sent[1]],[1,2,3,4]);
+ socket.receive({type:'ready',model:'gpt-live-1'});assert.deepEqual(JSON.parse(socket.sent[1]),{type:'listen'});
+ socket.receive({type:'capture',active:true});assert.equal(await starting,true);
+ live.audio(new Uint8Array([1,2,3,4]));assert.deepEqual([...socket.sent[2]],[1,2,3,4]);
  const finishing=live.finish('Be brief',event=>events.push(event));
- assert.deepEqual(JSON.parse(socket.sent[2]),{type:'finish',instructions:'Be brief'});
- socket.receive({type:'transcript',text:'What is Kafka?'});socket.receive({type:'delta',text:'Kafka is'});socket.receive({type:'done'});
+ assert.deepEqual(JSON.parse(socket.sent[3]),{type:'coach.instructions',text:'Be brief'});assert.deepEqual(JSON.parse(socket.sent[4]),{type:'finish'});
+ socket.receive({type:'transcript.final',text:'What is Kafka?'});socket.receive({type:'answer.delta',text:'Kafka is'});socket.receive({type:'answer.done',model:'test'});
  assert.equal(await finishing,true);assert.deepEqual(events.map(event=>event.type),['transcript','delta','done']);
 });
 
 test('live setup failure returns false so batch transcription can take over',async()=>{
  const socket=new Socket(),live=new LiveQuestion(()=>socket,1000);
- const starting=live.start('https://example.test','secret');socket.open();socket.receive({type:'error',text:'Unavailable'});
+ const starting=live.start('https://example.test','secret');socket.open();socket.receive({type:'error',message:'Unavailable'});
  assert.equal(await starting,false);assert.equal(live.ready,false);
 });
 
 test('live processing failure rejects finish so recorded audio can fall back',async()=>{
  const socket=new Socket(),live=new LiveQuestion(()=>socket,1000);
- const starting=live.start('https://example.test','secret');socket.open();socket.receive({type:'ready'});await starting;
- const finishing=live.finish('',()=>{});socket.receive({type:'error',text:'Live failed'});
+ const starting=live.start('https://example.test','secret');socket.open();socket.receive({type:'ready'});socket.receive({type:'capture',active:true});await starting;
+ const finishing=live.finish('',()=>{});socket.receive({type:'error',message:'Live failed'});
  await assert.rejects(finishing,/Live failed/);assert.equal(live.ready,false);
+});
+
+test('semantic answer completed before ring release is buffered and replayed',async()=>{
+ const socket=new Socket(),live=new LiveQuestion(()=>socket,1000),events=[];
+ const starting=live.start('https://example.test','secret');socket.open();socket.receive({type:'ready'});socket.receive({type:'capture',active:true});await starting;
+ socket.receive({type:'transcript.final',text:'Explain BigQuery.'});socket.receive({type:'answer.start'});socket.receive({type:'answer.delta',text:'BigQuery is'});
+ socket.receive({type:'answer.done',model:'test'});
+ assert.equal(await live.finish('',event=>events.push(event)),true);
+ assert.deepEqual(events.map(event=>event.type),['transcript','delta','done']);
+ assert.equal(socket.sent.filter(value=>typeof value==='string'&&JSON.parse(value).type==='finish').length,0);
 });

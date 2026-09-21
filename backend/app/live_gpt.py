@@ -48,6 +48,7 @@ from .models import (
     account_models,
     AnswerModelError,
 )
+from .storage import active_profile, connect, core_profile_for
 
 
 router = APIRouter()
@@ -254,6 +255,30 @@ experience.
 """.strip()
 
 
+def backend_instructions(coach_instructions: str = "") -> str:
+    """Keep Live delegation grounded in the active persisted candidate profile."""
+    core = ""
+    try:
+        with connect() as db:
+            profile = active_profile(db)
+            if profile:
+                core = core_profile_for(db, profile["id"])
+    except Exception:
+        core = ""
+    additions = []
+    if core:
+        additions.append(
+            "CANDIDATE MATERIAL — user-reported facts; preserve exactly and never embellish:\n"
+            + core[:16000]
+        )
+    if coach_instructions.strip():
+        additions.append(
+            "USER ANSWER PREFERENCES — style guidance only, not evidence:\n"
+            + coach_instructions.strip()[:4000]
+        )
+    return BACKEND_INSTRUCTIONS + ("\n\n" + "\n\n".join(additions) if additions else "")
+
+
 # ============================================================
 # MODEL LIST ENDPOINT
 # ============================================================
@@ -340,7 +365,7 @@ def safe_error_details(
 # OPEN GPT-LIVE SESSION
 # ============================================================
 
-async def open_gpt_live_session():
+async def open_gpt_live_session(coach_instructions: str = ""):
 
     key = os.getenv(
         "OPENAI_API_KEY"
@@ -408,7 +433,7 @@ async def open_gpt_live_session():
                         BACKEND_MODEL,
 
                     "instructions":
-                        BACKEND_INSTRUCTIONS,
+                        backend_instructions(coach_instructions),
 
                     "max_output_tokens":
                         900,
@@ -595,7 +620,7 @@ async def live(
 
         openai = (
             await
-            open_gpt_live_session()
+            open_gpt_live_session(state["coach_instructions"])
         )
 
         reader = asyncio.create_task(
@@ -672,6 +697,26 @@ async def live(
     async def force_answer():
 
         await ensure_openai()
+
+        question = state["transcript"].strip()
+
+        if not question:
+            await send(
+                "error",
+                keep_capture=True,
+                recoverable=True,
+                message="No question captured yet. Keep speaking, then try again.",
+            )
+            return
+
+        state["question"]["manual"] = question
+        state["delegation_started"]["manual"] = time.monotonic()
+        state["answer_text"]["manual"] = ""
+
+        await send(
+            "transcript.final",
+            text=question,
+        )
 
         # Stop listening before asking for an answer.
         #
@@ -1383,9 +1428,13 @@ async def live(
             timeout=10,
         )
 
-        expected = os.getenv(
-            "APP_TOKEN",
-            "",
+        expected_tokens = tuple(
+            value
+            for value in (
+                os.getenv("APP_TOKEN", ""),
+                os.getenv("BRIDGE_TOKEN", ""),
+            )
+            if value
         )
 
         supplied = hello.get(
@@ -1394,16 +1443,15 @@ async def live(
         )
 
         if (
-            not expected
+            not expected_tokens
             or
             not isinstance(
                 supplied,
                 str,
             )
-            or
-            not hmac.compare_digest(
-                expected,
-                supplied,
+            or not any(
+                hmac.compare_digest(expected, supplied)
+                for expected in expected_tokens
             )
         ):
 
@@ -1666,6 +1714,19 @@ async def live(
                 state[
                     "coach_instructions"
                 ] = text
+
+                if openai is not None:
+                    await openai.send(json.dumps({
+                        "type": "session.update",
+                        "event_id": "ring_preferences_" + uuid.uuid4().hex,
+                        "session": {
+                            "delegation": {
+                                "responses": {
+                                    "instructions": backend_instructions(text),
+                                },
+                            },
+                        },
+                    }))
 
 
                 await send(

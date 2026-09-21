@@ -52,9 +52,10 @@ class LiveRouteTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(ring_live.websockets, "connect", connect), patch.object(ring_live.ring_api.ring_agent.conversation, "stream", return_value=answer) as stream:
             await asyncio.wait_for(endpoint(client), timeout=3)
         self.assertEqual(client.sent[0]["type"], "ready")
+        self.assertEqual(client.sent[1], {"type": "capture", "active": True})
         self.assertIn("transcript.partial", [event["type"] for event in client.sent])
-        self.assertIn("transcript", [event["type"] for event in client.sent])
-        self.assertEqual(client.sent[-1]["type"], "done")
+        self.assertIn("transcript.final", [event["type"] for event in client.sent])
+        self.assertEqual(client.sent[-1]["type"], "answer.done")
         self.assertEqual(client.sent[-1]["transport"], "gpt-live-1")
         stream.assert_called_once_with("What is Kafka?", "gpt-6-astra", "fake", "natural", "Be brief")
         audio = [event for event in provider.sent if event["type"] == "session.input_audio.append"]

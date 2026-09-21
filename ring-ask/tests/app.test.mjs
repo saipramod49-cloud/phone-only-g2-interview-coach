@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import fs from 'node:fs';
 import ts from 'typescript';
 import * as controller from '../src/controller.mjs';import * as session from '../src/session.mjs';import * as reader from '../src/reader.mjs';
-const live={LiveQuestion:class{ready=false;async start(){return false;}audio(){}cancel(){}async finish(){return false;}}};
+const live={LiveQuestion:class{ready=false;async start(){return false;}audio(){}configure(){}cancel(){}async finish(){return false;}}};
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function element(){return {value:'',textContent:'',disabled:false,open:false,checked:false,children:[],style:{},classList:{toggle(){}},replaceChildren(){this.children=[];},append(n){this.children.push(n);},setPointerCapture(){}};}
 async function app(mode='tap',prior){

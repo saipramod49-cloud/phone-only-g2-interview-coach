@@ -72,6 +72,7 @@ def router_for(credentials, answer_model):
                 if event.get("type") == "error":
                     raise RuntimeError("GPT Live rejected session setup")
             await ws.send_json({"type": "ready", "model": "gpt-live-1"})
+            await ws.send_json({"type": "capture", "active": True})
 
             transcript = ""
             finish_at = last_delta = None
@@ -140,7 +141,7 @@ def router_for(credentials, answer_model):
 
             question = transcript.strip()
             await ws.send_json({
-                "type": "transcript",
+                "type": "transcript.final",
                 "text": question,
                 "transcriptionMs": round((time.monotonic() - finish_at) * 1000),
                 "source": "gpt-live-1",
@@ -156,10 +157,12 @@ def router_for(credentials, answer_model):
                 available, item = await asyncio.to_thread(_next, iterator)
                 if not available:
                     break
-                if item.get("type") == "done":
-                    item = {**item, "transport": "gpt-live-1"}
+                if item.get("type") == "delta":
+                    item = {**item, "type": "answer.delta"}
+                elif item.get("type") == "done":
+                    item = {**item, "type": "answer.done", "transport": "gpt-live-1"}
                 await ws.send_json(item)
-                if item.get("type") in ("done", "error"):
+                if item.get("type") in ("answer.done", "error"):
                     break
         except asyncio.CancelledError:
             raise

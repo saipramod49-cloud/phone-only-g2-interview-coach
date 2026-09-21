@@ -248,7 +248,7 @@ app = FastAPI(
 # routes still require an explicit app token; no ambient cookies are accepted.
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_credentials=False, allow_methods=["GET", "POST", "DELETE"],
-                   allow_headers=["X-App-Token", "Content-Type"])
+                   allow_headers=["Authorization", "X-App-Token", "X-Answer-Instructions", "Content-Type"])
 
 
 # ============================================================
@@ -2046,3 +2046,6 @@ app.include_router(
 # RING ASK LIVE ROUTER v1
 from .ring_live import router as ring_live_router
 app.include_router(ring_live_router)
+
+from .ring_ask import router as ring_ask_router
+app.include_router(ring_ask_router)
