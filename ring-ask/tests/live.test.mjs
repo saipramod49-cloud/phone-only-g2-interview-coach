@@ -71,3 +71,11 @@ test('continuous mode keeps one socket open and receives multiple answers',async
  live.cancel();
  assert.ok(socket.sent.some(value=>typeof value==='string'&&JSON.parse(value).type==='conversation.mode'));
 });
+
+test('live configuration can refresh a dossier even without style instructions',async()=>{
+ const socket=new Socket(),live=new LiveQuestion(()=>socket,1000);
+ const starting=live.start('https://example.test','secret');socket.open();socket.receive({type:'ready'});socket.receive({type:'capture',active:true});await starting;
+ live.configure('');
+ assert.deepEqual(JSON.parse(socket.sent.at(-1)),{type:'coach.instructions',text:''});
+ live.cancel();
+});

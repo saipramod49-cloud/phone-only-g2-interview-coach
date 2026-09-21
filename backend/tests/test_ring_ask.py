@@ -17,7 +17,8 @@ def test_ring_ask_health_static_page_and_auth(monkeypatch):
         assert health.json()["live_model"] == "gpt-live-1"
         page = client.get("/ring/")
         assert page.status_code == 200
-        assert "v0.9.0 AUTO CONVERSATION" in page.text
+        assert health.json()["version"] == "0.10.0"
+        assert "v0.10.0 INTERVIEW PACKS" in page.text
         assert client.get("/ring/../main.py").status_code == 404
 
 

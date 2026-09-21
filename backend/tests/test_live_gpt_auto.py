@@ -36,6 +36,29 @@ def test_live_backend_dossier_includes_active_profile_material(monkeypatch, tmp_
     assert "Keep answers conversational" in prompt
 
 
+def test_target_platform_prioritizes_jd_and_hypothetical_scenarios_are_honest(monkeypatch, tmp_path):
+    monkeypatch.setattr(storage, "DB", tmp_path / "azure.sqlite3")
+    monkeypatch.setattr(live_gpt, "connect", storage.connect)
+    with storage.connect() as db:
+        profile = storage.active_profile(db)
+        db.execute(
+            "UPDATE profiles SET job_description=? WHERE id=?",
+            ("Azure Data Engineer using ADF, ADLS Gen2, Synapse and Databricks", profile["id"]),
+        )
+        db.execute(
+            "INSERT INTO documents VALUES(?,?,?,?,?,?)",
+            ("resume-gcp", profile["id"], "Resume", "resume", "Historical BigQuery and GCS project.", 1.0),
+        )
+        db.commit()
+    prompt = live_gpt.backend_instructions()
+    assert "TARGET PLATFORM: AZURE" in prompt
+    assert "Historical BigQuery and GCS project" in prompt
+    assert "Never silently swap" in prompt
+    assert 'framed honestly as "I would"' in prompt
+    assert live_gpt.target_platform("BigQuery, GCS and Composer") == "GCP"
+    assert live_gpt.target_platform("S3, Glue and Redshift") == "AWS"
+
+
 def test_live_prompt_rejects_non_directed_and_candidate_speech():
     assert "directed to the wearer" in live_gpt.LIVE_INSTRUCTIONS
     assert "wearer's own spoken answer" in live_gpt.LIVE_INSTRUCTIONS

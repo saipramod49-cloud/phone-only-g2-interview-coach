@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Ring Ask</title>  <script type="module" crossorigin src="./assets/index-YUuO4OLC.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DYw6d7rF.css">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Ring Ask</title>  <script type="module" crossorigin src="./assets/index-_vZgcVej.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BM74CXiR.css">
 </head>
 <body><main id="phone-scroll">
-  <header><span class="eyebrow">RING ASK · v0.9.0 AUTO CONVERSATION</span><span id="connection">Connecting glasses…</span></header>
+  <header><span class="eyebrow">RING ASK · v0.10.0 INTERVIEW PACKS</span><span id="connection">Connecting glasses…</span></header>
   <h1>Start once. Stay present.</h1>
   <p>Auto Conversation keeps one GPT-Live session listening until you stop it, detects questions directed to you, and streams profile-grounded answers. Use only in mock interviews or conversations where recording and AI assistance are permitted.</p>
   <nav class="quick-links" aria-label="Ring Ask links">
@@ -23,6 +23,25 @@
   <button id="restore-listen" class="restore-listen">Restore glasses controls & start listening</button>
   <div class="controls secondary"><button id="up">↑ Previous answer</button><button id="down">Newer answer ↓</button></div>
   <div class="controls secondary"><button id="previous-page">Previous page</button><button id="next-page">Next page · double tap</button></div>
+  <details id="interview-pack"><summary>Interview Pack · resume, JD & prep notes</summary>
+    <p>Make one pack per target role. Ring Ask prioritizes the active JD's cloud stack, grounds personal claims in your files, and can suggest profile-consistent hypothetical approaches when no exact example exists.</p>
+    <p id="pack-status" role="status">Open this section to load your saved interview packs.</p>
+    <label>Active interview pack<select id="profile-select"><option value="">Load packs first</option></select></label>
+    <button id="refresh-packs">Refresh interview packs</button>
+    <div class="pack-card">
+      <label>New pack name<input id="pack-name" maxlength="120" placeholder="Example: Azure Data Engineer · Contoso"></label>
+      <label>Target job description<textarea id="pack-jd" rows="7" maxlength="30000" placeholder="Paste the complete JD. Azure, GCP or AWS requirements here take priority for target-role answers."></textarea></label>
+      <button id="create-pack">Create & use this pack</button>
+    </div>
+    <div class="pack-card">
+      <label>Material type<select id="document-kind"><option value="resume">Resume</option><option value="professional profile">Professional profile</option><option value="roles and responsibilities">Roles & responsibilities</option><option value="project details">Project details</option><option value="prep notes">Prep notes file</option><option value="other evidence">Other evidence</option></select></label>
+      <label>PDF, DOCX, TXT, MD or CSV<input id="pack-file" type="file" accept=".pdf,.docx,.txt,.md,.csv"></label>
+      <button id="upload-material">Upload to active pack</button>
+      <label>Quick prep notes<textarea id="prep-notes" rows="6" maxlength="30000" placeholder="Add truthful project details, common scenarios, architecture choices, terminology, or points you want emphasized."></textarea></label>
+      <button id="save-prep-notes">Save prep notes</button>
+    </div>
+    <div id="pack-files" aria-live="polite"></div>
+  </details>
   <details id="answer-preferences" open><summary>Listening & answer settings</summary>
     <label>Conversation mode<select id="conversation-mode"><option value="manual">Question at a time</option><option value="auto">Auto Conversation · start once</option></select></label>
     <label>Listening control<select id="listen-mode"><option value="tap">Tap to start · tap to stop</option><option value="hold">Hold through question · release to answer</option></select></label>

@@ -142,7 +142,7 @@ incomplete question.
 BACKEND_INSTRUCTIONS = """
 You are the reasoning backend for a live technical interview assistant.
 
-The user is interviewing for senior Data Engineering roles.
+The user is interviewing for the role described in the active target job description.
 
 The answer will appear on smart glasses and the candidate will speak
 it naturally.
@@ -197,6 +197,11 @@ Answer at senior Data Engineer level.
 
 Use accurate production concepts where relevant, including:
 
+- Azure Data Factory
+- ADLS Gen2
+- Event Hubs
+- Synapse
+- Microsoft Fabric
 - BigQuery
 - GCS
 - Airflow
@@ -225,6 +230,22 @@ Use accurate production concepts where relevant, including:
 - transactional processing
 
 Do not force technologies into an answer when they are not relevant.
+
+TARGET STACK SELECTION
+
+Treat the target job description as the source of truth for the target role's
+cloud and platform. If it is Azure-oriented, default new designs and proposed
+solutions to Azure-native services. If it is GCP-oriented, use GCP-native
+services. If it is AWS-oriented, use AWS-native services. Never silently swap
+Azure, GCP, and AWS products or mix clouds just because another platform is
+mentioned in the resume. Historical resume projects must retain their actual
+technology. An interviewer who explicitly names a platform overrides the JD
+for that question.
+
+Useful equivalents include Azure Data Factory or Fabric Data Factory, ADLS
+Gen2, Event Hubs, Synapse or Fabric Warehouse, and Azure Databricks; GCP
+BigQuery, GCS, Pub/Sub, Dataflow, Dataproc, and Composer; AWS S3, Glue,
+Kinesis, EMR, and Redshift. Choose only the services relevant to the question.
 
 LENGTH
 
@@ -257,10 +278,13 @@ understanding and question completion.
 Do not invent personal employment incidents, metrics, achievements,
 clients, dates, or project facts.
 
-If a question explicitly requires personal experience and no verified
-candidate evidence is available in the Live context, give a clearly
-general or hypothetical engineering approach rather than fabricating
-experience.
+If a question explicitly requires personal experience, use the closest
+verified project facts when they genuinely fit. You may connect documented
+skills into a coherent scenario, but never invent an employer, client, metric,
+date, achievement, incident, or technology the candidate claims to have used.
+If no verified incident fits, still give a useful, profile-consistent answer
+framed honestly as "I would" or "A realistic approach would be". Do not give a
+disclaimer or say evidence is missing.
 """.strip()
 
 
@@ -273,6 +297,7 @@ def profile_dossier() -> str:
             if profile:
                 sections.append("ACTIVE PROFILE: " + profile["name"])
                 if profile["job_description"].strip():
+                    sections.append("TARGET PLATFORM: " + target_platform(profile["job_description"]))
                     sections.append("TARGET JOB DESCRIPTION:\n" + profile["job_description"].strip())
                 documents = db.execute(
                     "SELECT name, kind, text FROM documents WHERE profile_id=? "
@@ -291,6 +316,19 @@ def profile_dossier() -> str:
 
     dossier = "\n\n".join(sections)
     return dossier[:24000]
+
+
+def target_platform(job_description: str) -> str:
+    """Give the response model an explicit JD-first cloud signal."""
+    text = job_description.lower()
+    platforms = {
+        "AZURE": ("azure", "data factory", "adf", "adls", "synapse", "fabric", "event hubs"),
+        "GCP": ("gcp", "google cloud", "bigquery", "gcs", "dataflow", "dataproc", "pub/sub", "composer"),
+        "AWS": ("aws", "amazon web services", "s3", "glue", "redshift", "kinesis", "emr"),
+    }
+    scores = {name: sum(term in text for term in terms) for name, terms in platforms.items()}
+    winner = max(scores, key=scores.get)
+    return winner if scores[winner] else "FOLLOW THE INTERVIEWER'S PLATFORM TERMINOLOGY"
 
 
 def backend_instructions(coach_instructions: str = "") -> str:

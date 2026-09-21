@@ -106,8 +106,8 @@ export class LiveQuestion {
   }
 
   configure(instructions) {
-    if (this.ready && this.socket?.readyState === 1 && instructions) {
-      this.socket.send(JSON.stringify({type:'coach.instructions', text:instructions}));
+    if (this.ready && this.socket?.readyState === 1) {
+      this.socket.send(JSON.stringify({type:'coach.instructions', text:String(instructions || '')}));
     }
   }
 

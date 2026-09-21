@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import fs from 'node:fs';
 import ts from 'typescript';
 import * as controller from '../src/controller.mjs';import * as session from '../src/session.mjs';import * as reader from '../src/reader.mjs';
+import * as preparation from '../src/preparation.mjs';
 let liveConnect=false,liveInstances=[];
 const live={LiveQuestion:class{
  ready=false;continuous=false;audioBytes=0;
@@ -33,7 +34,7 @@ async function app(mode='tap',prior,options={}){
     {type:'delta',text:'```sql\nSELECT customer_id\nFROM customers;\n```\n\nKeep the identifiers.'},{type:'done',model:'test'}].map(x=>JSON.stringify(x)).join('\n'));
   },exports:{},require:name=>{
    if(name==='@evenrealities/even_hub_sdk')return sdk;
-   if(name==='./controller.mjs')return controller;if(name==='./session.mjs')return session;if(name==='./reader.mjs')return reader;if(name==='./live.mjs')return live;
+   if(name==='./controller.mjs')return controller;if(name==='./session.mjs')return session;if(name==='./reader.mjs')return reader;if(name==='./live.mjs')return live;if(name==='./preparation.mjs')return preparation;
    if(name==='./bitmap')return {BitmapDisplay:class{reset(){}async paintFrame(){}},imageContainers:()=>[],measureFont:t=>t.length*10};if(name==='./style.css')return {};throw Error(name);
   }});
  vm.runInContext(ts.transpileModule(fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context);

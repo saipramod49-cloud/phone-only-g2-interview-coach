@@ -1,6 +1,7 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,MenuContainerProperty,MenuItemProperty,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
 import {Recorder,gestures,recoveryDelay} from './controller.mjs';
 import {LiveQuestion} from './live.mjs';
+import {InterviewPackClient,activeProfile,targetStack} from './preparation.mjs';
 import {readingSettings,deadline,textWidth,emphasisParts} from './reader.mjs';
 import {AnswerHistory,RingInput,readingFrame} from './session.mjs';
 import {BitmapDisplay,imageContainers,measureFont} from './bitmap';
@@ -16,6 +17,7 @@ let paintTimer:ReturnType<typeof setTimeout>|undefined,recovering:ReturnType<typ
 let abort:AbortController|undefined,retryAudio:Uint8Array|undefined,requestSerial=0;
 let draft:{question:string,answer:string}|undefined,showDraft=false;
 let autoActive=false,autoStarted=0,autoFirst=0;
+let packState:any=null,packLoading=false;
 const bitmap=new BitmapDisplay();
 function restore(raw:any){
  backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);
@@ -32,6 +34,27 @@ catch{restore({});}
 const history=new AnswerHistory(saved);
 function persist(){try{localStorage.setItem('ring-ask-history',JSON.stringify(history.entries));}catch{el('hint').textContent='Phone storage is full; history is kept for this session only.';}}
 const liveQuestion=new LiveQuestion();
+function packClient(){return new InterviewPackClient(backend.value.trim(),token.value.trim());}
+function refreshLiveDossier(){if(liveQuestion.ready)liveQuestion.configure(answerInstructions.trim());}
+function renderPack(){
+ const select=el<HTMLSelectElement>('profile-select'),files=el('pack-files'),profile=activeProfile(packState);
+ select.replaceChildren();
+ for(const item of packState?.profiles||[]){const option=document.createElement('option');option.value=item.id;option.textContent=`${item.active?'✓ ':''}${item.name}`;option.selected=item.id===profile?.id;select.append(option);}
+ if(!profile){const option=document.createElement('option');option.value='';option.textContent='No interview packs yet';select.append(option);files.replaceChildren();return;}
+ el('pack-status').textContent=`Active: ${profile.name} · target stack: ${targetStack(profile.job_description)} · ${profile.documents.length} file${profile.documents.length===1?'':'s'}`;
+ files.replaceChildren();const summary=document.createElement('p');summary.className='pack-summary';summary.textContent=profile.job_description?`JD saved · ${profile.job_description.length} characters. Changes are applied to the current Live session.`:'No JD saved yet. Create a new pack with the target job description for stack-specific answers.';files.append(summary);
+ for(const document of profile.documents){const chip=document.createElement('span');chip.className='pack-file';chip.textContent=`${document.kind} · ${document.name}`;files.append(chip);}
+}
+async function loadPacks(message=''){
+ if(packLoading)return;if(!token.value.trim()){el('pack-status').textContent='Enter and save your bridge token first.';return;}packLoading=true;
+ try{packState=await packClient().state();renderPack();if(message)el('pack-status').textContent=message+' '+el('pack-status').textContent;}
+ catch(error){el('pack-status').textContent=(error as Error).message;}finally{packLoading=false;}
+}
+async function updatePack(action:()=>Promise<any>,success:string){
+ const priorStatus=status;if(autoActive)status='Updating the active Interview Pack…';el('pack-status').textContent='Saving…';
+ try{await action();await loadPacks();refreshLiveDossier();el('pack-status').textContent=`${success} ${autoActive?'The running Live session has been refreshed.':'It will load when listening starts.'}`;}
+ catch(error){el('pack-status').textContent=(error as Error).message;}finally{status=autoActive?'Auto Conversation · listening':priorStatus;}render();
+}
 const recorder=new Recorder(async(on:boolean)=>{
  if(on&&(!bridge||!screenReady||backgrounded))throw new Error('Glasses reconnecting. Wait for Connected and try again.');
  if(!bridge)return true;
@@ -330,6 +353,12 @@ el<HTMLSelectElement>('answer-layout').onchange=()=>{touched=true;answerLayout=e
 for(const id of ['font','rows','words','width','x','y'])el<HTMLInputElement>(id).onchange=()=>{touched=true;reading=readingSettings(Object.fromEntries(['font','rows','words','width','x','y'].map(key=>[key,el<HTMLInputElement>(key).value])));layoutDirty=true;history.page=0;void saveSettings();render();};
 el('reset-reading').onclick=()=>{reading=readingSettings({font:'native',rows:10,words:'auto',width:576,x:50,y:50});for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);layoutDirty=true;history.page=0;void saveSettings();render();};
 el('apply-instructions').onclick=()=>{answerInstructions=el<HTMLTextAreaElement>('answer-instructions').value.trim();keepInstructions=el<HTMLInputElement>('keep-instructions').checked;el('instruction-status').textContent=keepInstructions?'Saved for future answers':'Applies to the next answer';void saveSettings();};
+el<HTMLDetailsElement>('interview-pack').ontoggle=()=>{if(el<HTMLDetailsElement>('interview-pack').open&&!packState)void loadPacks();};
+el('refresh-packs').onclick=()=>void loadPacks('Refreshed.');
+el<HTMLSelectElement>('profile-select').onchange=()=>{const id=el<HTMLSelectElement>('profile-select').value;if(id)void updatePack(()=>packClient().activate(id),'Interview pack activated.');};
+el('create-pack').onclick=()=>{const name=el<HTMLInputElement>('pack-name').value.trim(),jd=el<HTMLTextAreaElement>('pack-jd').value.trim();if(!name){el('pack-status').textContent='Enter a pack name.';return;}if(!jd){el('pack-status').textContent='Paste the target job description so answers can match its stack.';return;}void updatePack(()=>packClient().create(name,jd),'Interview pack created and activated.');};
+el('upload-material').onclick=()=>{const profile=activeProfile(packState),file=el<HTMLInputElement>('pack-file').files?.[0],kind=el<HTMLSelectElement>('document-kind').value;if(!profile){el('pack-status').textContent='Create or load an interview pack first.';return;}if(!file){el('pack-status').textContent='Choose a PDF, DOCX, TXT, MD or CSV file.';return;}void updatePack(()=>packClient().upload(profile.id,kind,file),'Material uploaded.');};
+el('save-prep-notes').onclick=()=>{const profile=activeProfile(packState),notes=el<HTMLTextAreaElement>('prep-notes').value.trim();if(!profile){el('pack-status').textContent='Create or load an interview pack first.';return;}if(!notes){el('pack-status').textContent='Enter prep notes first.';return;}void updatePack(()=>packClient().addNotes(profile.id,notes),'Prep notes saved.');};
 el('demo').onclick=()=>{history.add('How would you move website events into GCS and BigQuery?',"I’d capture website events through the application ingestion pipeline and land the raw files in **GCS**. Keeping the original files gives us a way to audit and replay data.\n\n**Airflow** would orchestrate processing, dependencies, retries, and alerts. Python or PySpark jobs would validate schemas, handle duplicates, and apply business rules.\n\nI’d load clean data into **BigQuery staging**, then build curated reporting tables with SQL. I’d check reconciliation and freshness before publishing.\n\n**Website → Ingestion → Raw GCS → Processing → BigQuery staging → Curated tables**");showDraft=false;persist();render();};
 window.addEventListener('online',resume);window.addEventListener('pageshow',resume);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();else persist();});

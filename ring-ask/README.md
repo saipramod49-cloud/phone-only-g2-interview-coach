@@ -1,4 +1,4 @@
-# Ring Ask v0.9.0 Auto Conversation
+# Ring Ask v0.10.0 Interview Packs
 
 Open [Ring Ask in Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), the [live Render app](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
 
@@ -22,7 +22,9 @@ There is one answer style, adapted to the request: readable conversational parag
 
 The GPT-Live backend model is configured on Render with `OPENAI_LIVE_BACKEND_MODEL`; the question-at-a-time fallback uses `RING_MODEL` or `OPENAI_MODEL`. The authenticated `/api/health` reports the deployed model, prompt style, version, and recording limit. Measured latency varies with model service, network, audio quality, and glasses rendering.
 
-v0.9.0 adds an explicit Auto Conversation mode for mock interviews and disclosed AI-assisted conversations. One user action opens a persistent server-owned GPT-Live 1 session and starts the E2's mono PCM16 microphone at 16 kHz. GPT-Live ignores ordinary discussion and the wearer's own response, detects complete questions directed to the wearer, and delegates answers to the configured Responses model. Each answer is grounded in a bounded dossier containing the active profile, target job description, resume, projects, responsibilities, and prep notes. Text streams to the lenses while the same session automatically resumes listening. Question-at-a-time capture and its `/api/ask` fallback remain available. The OpenAI API key remains only in Render.
+v0.10.0 puts Interview Packs directly in the Ring Ask phone UI. Create one pack per role, paste its JD, upload a PDF/DOCX/TXT resume or project material, add quick prep notes, and switch the active pack without leaving the app. The active JD chooses the target cloud stack (Azure, GCP, or AWS) while resume projects retain their historical technology. Personal claims remain grounded in uploaded facts; when no exact incident exists, Ring Ask gives a useful profile-consistent hypothetical approach instead of inventing employment history. Pack changes refresh the running GPT-Live delegation session.
+
+v0.9.0 added explicit Auto Conversation mode for mock interviews and disclosed AI-assisted conversations. One user action opens a persistent server-owned GPT-Live 1 session and starts the E2's mono PCM16 microphone at 16 kHz. GPT-Live ignores ordinary discussion and the wearer's own response, detects complete questions directed to the wearer, and delegates answers to the configured Responses model. Each answer is grounded in a bounded dossier containing the active profile, target job description, resume, projects, responsibilities, and prep notes. Text streams to the lenses while the same session automatically resumes listening. Question-at-a-time capture and its `/api/ask` fallback remain available. The OpenAI API key remains only in Render.
 
 Wake recovery in v0.7.8 is available inside the glasses menu. **Start listening** is the first plugin action, directly above **Resume Ring Ask**; it force-rebuilds ring capture and opens the glasses microphone. **Resume Ring Ask** force-rebuilds controls without recording, and returning from the system menu triggers that rebuild automatically.
 
