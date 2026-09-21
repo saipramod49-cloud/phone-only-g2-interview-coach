@@ -61,7 +61,18 @@ def test_target_platform_prioritizes_jd_and_hypothetical_scenarios_are_honest(mo
 
 def test_live_prompt_rejects_non_directed_and_candidate_speech():
     assert "directed to the wearer" in live_gpt.LIVE_INSTRUCTIONS
-    assert "wearer's own spoken answer" in live_gpt.LIVE_INSTRUCTIONS
+    assert "wearer is speaking their own answer" in live_gpt.LIVE_INSTRUCTIONS
+
+
+def test_live_prompt_delegates_completed_questions_without_long_silence():
+    prompt = live_gpt.LIVE_INSTRUCTIONS
+    assert "Delegation policy:" in prompt
+    assert "Backend tools:" in prompt
+    assert "Delegate to the backend when:" in prompt
+    assert "Do not delegate to the backend when:" in prompt
+    assert "delegate immediately" in prompt
+    assert "Do not wait for a long silence" in prompt
+    assert "normal conversational pause after a completed question is sufficient" in prompt
 
 
 class FakeLiveConnection:
