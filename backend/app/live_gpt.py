@@ -48,7 +48,7 @@ from .models import (
     account_models,
     AnswerModelError,
 )
-from .storage import active_profile, connect, core_profile_for
+from .storage import active_profile, connect
 
 
 router = APIRouter()
@@ -120,6 +120,15 @@ microphone capture before treating new speech as another question.
 
 If the speaker is merely thinking aloud, providing background, or
 has not reached an actionable request yet, continue listening.
+
+Only delegate a question that is clearly directed to the wearer and
+requires the wearer to respond. Do not delegate greetings, small talk,
+rhetorical questions, questions addressed to somebody else, or the
+wearer's own spoken answer.
+
+After a backend answer is displayed, expect the wearer to speak that
+answer aloud. Treat it as the candidate's response, not as a new
+question. Keep listening until a later interviewer question is clear.
 
 Prefer waiting slightly longer over prematurely answering an
 incomplete question.
@@ -255,21 +264,43 @@ experience.
 """.strip()
 
 
-def backend_instructions(coach_instructions: str = "") -> str:
-    """Keep Live delegation grounded in the active persisted candidate profile."""
-    core = ""
+def profile_dossier() -> str:
+    """Build one bounded, stable dossier for the lifetime of a Live session."""
+    sections = []
     try:
         with connect() as db:
             profile = active_profile(db)
             if profile:
-                core = core_profile_for(db, profile["id"])
+                sections.append("ACTIVE PROFILE: " + profile["name"])
+                if profile["job_description"].strip():
+                    sections.append("TARGET JOB DESCRIPTION:\n" + profile["job_description"].strip())
+                documents = db.execute(
+                    "SELECT name, kind, text FROM documents WHERE profile_id=? "
+                    "ORDER BY CASE kind WHEN 'core_profile' THEN 0 WHEN 'responsibilities' THEN 1 "
+                    "WHEN 'project' THEN 2 WHEN 'resume' THEN 3 ELSE 4 END, created_at DESC",
+                    (profile["id"],),
+                ).fetchall()
+                for document in documents:
+                    text = document["text"].strip()
+                    if text:
+                        sections.append(
+                            f"{document['kind'].upper()} — {document['name']}:\n{text}"
+                        )
     except Exception:
-        core = ""
+        return ""
+
+    dossier = "\n\n".join(sections)
+    return dossier[:24000]
+
+
+def backend_instructions(coach_instructions: str = "") -> str:
+    """Keep Live delegation grounded in the active persisted candidate profile."""
+    dossier = profile_dossier()
     additions = []
-    if core:
+    if dossier:
         additions.append(
             "CANDIDATE MATERIAL — user-reported facts; preserve exactly and never embellish:\n"
-            + core[:16000]
+            + dossier
         )
     if coach_instructions.strip():
         additions.append(
@@ -576,6 +607,9 @@ async def live(
 
         "coach_instructions":
             "",
+
+        "auto_resume":
+            False,
     }
 
 
@@ -688,6 +722,23 @@ async def live(
         state[
             "muted"
         ] = False
+
+
+    async def resume_auto_conversation():
+        """Re-arm the same Live session after an answer without restarting audio."""
+        if not state["auto_resume"] or openai is None:
+            return
+
+        state["transcript"] = ""
+        await unmute_openai()
+        state["listening"] = True
+
+        await send("capture", active=True)
+        await send("flow", phase="listening")
+        await send(
+            "state",
+            message="Auto Conversation listening · waiting for a question directed to you",
+        )
 
 
     # ========================================================
@@ -1280,27 +1331,24 @@ async def live(
                             )
 
 
-                        # IMPORTANT:
-                        #
-                        # We deliberately remain PAUSED here.
-                        #
-                        # Do not automatically switch back to listening.
-                        # The candidate may still be reading the answer.
-                        await send(
-                            "flow",
-                            phase=
-                                "paused",
-                        )
+                        if state["auto_resume"]:
+                            await resume_auto_conversation()
+                        else:
+                            # Question-at-a-time mode remains paused while
+                            # the wearer reads the completed answer.
+                            await send(
+                                "flow",
+                                phase="paused",
+                            )
 
-
-                        await send(
-                            "state",
-                            message=(
-                                "Answer ready · microphone paused · "
-                                "tap Resume question listening for "
-                                "the next question"
-                            ),
-                        )
+                            await send(
+                                "state",
+                                message=(
+                                    "Answer ready · microphone paused · "
+                                    "tap Resume question listening for "
+                                    "the next question"
+                                ),
+                            )
 
 
                         print(
@@ -1336,6 +1384,9 @@ async def live(
                                 "Use Retry or resume listening."
                             ),
                         )
+
+                        if state["auto_resume"]:
+                            await resume_auto_conversation()
 
                         continue
 
@@ -1505,6 +1556,7 @@ async def live(
                 "natural_flow",
                 "gpt_live_1",
                 "pause_during_answer",
+                "auto_conversation",
             ],
         )
 
@@ -1659,6 +1711,19 @@ async def live(
                     "pong"
                 )
 
+                continue
+
+
+            # =================================================
+            # HANDS-FREE AUTO CONVERSATION MODE
+            # =================================================
+
+            if kind == "conversation.mode":
+                state["auto_resume"] = message.get("active") is True
+                await send(
+                    "conversation.mode",
+                    active=state["auto_resume"],
+                )
                 continue
 
 

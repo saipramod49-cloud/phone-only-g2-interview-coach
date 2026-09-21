@@ -50,3 +50,24 @@ test('semantic answer completed before ring release is buffered and replayed',as
  assert.deepEqual(events.map(event=>event.type),['transcript','delta','done']);
  assert.equal(socket.sent.filter(value=>typeof value==='string'&&JSON.parse(value).type==='finish').length,0);
 });
+
+test('continuous mode keeps one socket open and receives multiple answers',async()=>{
+ const socket=new Socket(),events=[];
+ const live=new LiveQuestion(()=>socket,1000);
+ const starting=live.start('https://example.test','secret',event=>events.push(event),{continuous:true});
+ socket.open();socket.receive({type:'ready'});
+ assert.deepEqual(JSON.parse(socket.sent[1]),{type:'conversation.mode',active:true});
+ assert.deepEqual(JSON.parse(socket.sent[2]),{type:'listen'});
+ socket.receive({type:'capture',active:true});assert.equal(await starting,true);
+ for(const [question,answer] of [['What is Kafka?','Kafka is a log.'],['Why partition it?','Partitions scale throughput.']]){
+  socket.receive({type:'transcript.final',text:question});
+  socket.receive({type:'answer.start',question});
+  socket.receive({type:'answer.delta',text:answer});
+  socket.receive({type:'answer.done',model:'test'});
+  socket.receive({type:'capture',active:true});
+ }
+ assert.equal(socket.readyState,1);
+ assert.equal(events.filter(event=>event.type==='done').length,2);
+ live.cancel();
+ assert.ok(socket.sent.some(value=>typeof value==='string'&&JSON.parse(value).type==='conversation.mode'));
+});

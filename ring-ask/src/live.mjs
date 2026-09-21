@@ -19,11 +19,13 @@ export class LiveQuestion {
     this.pending = [];
     this.answerStarted = false;
     this.completed = false;
+    this.continuous = false;
   }
 
-  async start(backend, token, preview = _event => {}) {
+  async start(backend, token, preview = _event => {}, options = {}) {
     this.cancel();
     this.handler = preview;
+    this.continuous = options.continuous === true;
     this.pending = []; this.answerStarted = false; this.completed = false;
     let socket;
     try { socket = this.socketFactory(liveEndpoint(backend)); }
@@ -43,13 +45,18 @@ export class LiveQuestion {
         let event;
         try { event = JSON.parse(message.data); } catch { return; }
         if (event.type === 'ready') {
+          if (this.continuous) socket.send(JSON.stringify({type:'conversation.mode', active:true}));
           socket.send(JSON.stringify({type:'listen'}));
           return;
         }
         if (event.type === 'capture' && event.active === true && !this.ready) {
           this.ready = true; finish(true); return;
         }
-        if (event.type === 'answer.start') { this.answerStarted = true; return; }
+        if (event.type === 'answer.start') {
+          this.answerStarted = true;
+          if (this.continuous) this.handler?.(event);
+          return;
+        }
         const mapped = event.type === 'transcript.final'
           ? {type:'transcript', text:event.text || '', transcriptionMs:0, source:'gpt-live-1'}
           : event.type === 'answer.delta'
@@ -60,16 +67,25 @@ export class LiveQuestion {
                 ? {type:'error', text:event.message || event.text || 'GPT Live question failed.'}
                 : event;
         if (mapped.type === 'error') {
+          if (this.continuous && event.recoverable !== false) {
+            this.handler?.(mapped);
+            return;
+          }
           this.ready = false;
           const error = new Error(mapped.text);
           if (this.finishReject) this.finishReject(error);
           this.finishResolve = null; this.finishReject = null; finish(false);
           return;
         }
-        if (!this.finishResolve && ['transcript','delta','done'].includes(mapped.type)) this.pending.push(mapped);
+        if (!this.continuous && !this.finishResolve && ['transcript','delta','done'].includes(mapped.type)) this.pending.push(mapped);
         else this.handler?.(mapped);
         if (mapped.type === 'done') {
           this.completed = true;
+          if (this.continuous) {
+            this.answerStarted = false;
+            this.completed = false;
+            return;
+          }
           if (this.finishResolve) {
             this.finishResolve(true); this.finishResolve = null; this.finishReject = null;
             try { socket.close(); } catch {}
@@ -114,10 +130,14 @@ export class LiveQuestion {
     const socket = this.socket;
     this.socket = null; this.ready = false; this.handler = null;
     if (socket && socket.readyState < 2) {
+      if (this.continuous && socket.readyState === 1) {
+        try { socket.send(JSON.stringify({type:'conversation.mode', active:false})); } catch {}
+      }
       try { socket.send(JSON.stringify({type:'cancel'})); } catch {}
       try { socket.close(); } catch {}
     }
     if (this.finishReject) this.finishReject(new Error('Question cancelled.'));
     this.finishResolve = null; this.finishReject = null;
+    this.continuous = false;
   }
 }

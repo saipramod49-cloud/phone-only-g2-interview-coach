@@ -1,8 +1,13 @@
-# Ring Ask v0.8.1 GPT-Live beta
+# Ring Ask v0.9.0 Auto Conversation
 
 Open [Ring Ask in Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), the [live Render app](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
 
-Choose one listening mode in Listening & answer settings:
+Install the private or Beta `.ehpk` from Even Hub once, then enable Ring Ask in the Even Realities app's glasses-menu settings. It appears as a normal app card and glasses-menu entry; QR scanning is only for local developer testing.
+
+Choose one conversation mode in Listening & answer settings:
+
+- Auto Conversation: start once, keep the same Live session and glasses microphone active, detect questions directed to the wearer, stream each answer, and automatically listen for the next question until explicitly stopped.
+- Question at a time: use the existing tap or hold controls and retain the batch fallback.
 
 - Tap mode: tap starts capture, the next deliberate tap stops and submits. Release does nothing.
 - Hold mode: hold throughout the question, release to submit. Both modes support up to five minutes.
@@ -15,9 +20,9 @@ Every answer page has a question and page/history status. Choose question above/
 
 There is one answer style, adapted to the request: readable conversational paragraphs, a matching flow for architecture where useful, and actual SQL/Python/PySpark code first when requested. Follow-ups retain conversation context. Resume and prep notes guide relevant answers without limiting help on unfamiliar stacks. Proposed experience uses conditional language rather than invented personal claims. The next-answer instruction box can refine answers without a deployment.
 
-Ring Ask defaults to GPT-6 Astra with low reasoning effort, independently of the legacy agent model. Set RING_MODEL to override. The authenticated /api/health reports the deployed model, prompt style, version, and recording limit. Measured latency varies with transcription, model service, network, and glasses rendering.
+The GPT-Live backend model is configured on Render with `OPENAI_LIVE_BACKEND_MODEL`; the question-at-a-time fallback uses `RING_MODEL` or `OPENAI_MODEL`. The authenticated `/api/health` reports the deployed model, prompt style, version, and recording limit. Measured latency varies with model service, network, audio quality, and glasses rendering.
 
-v0.8.1 opens a server-owned GPT-Live 1 WebSocket before the glasses microphone starts and streams the E2's native mono PCM16 audio at 16 kHz. GPT-Live detects the complete question and delegates the answer to the configured Responses model; voice output is discarded and only text is shown on the lenses. The active Interview Lens profile and Ring Ask answer preferences are included in the delegated backend instructions. Tap/hold capture remains explicit, while semantic completion can stop capture early. If the Live session cannot start or finalize, the locally buffered recording automatically falls back to `/api/ask` transcription and the grounded Interview Lens answer backend. The OpenAI API key remains only in Render.
+v0.9.0 adds an explicit Auto Conversation mode for mock interviews and disclosed AI-assisted conversations. One user action opens a persistent server-owned GPT-Live 1 session and starts the E2's mono PCM16 microphone at 16 kHz. GPT-Live ignores ordinary discussion and the wearer's own response, detects complete questions directed to the wearer, and delegates answers to the configured Responses model. Each answer is grounded in a bounded dossier containing the active profile, target job description, resume, projects, responsibilities, and prep notes. Text streams to the lenses while the same session automatically resumes listening. Question-at-a-time capture and its `/api/ask` fallback remain available. The OpenAI API key remains only in Render.
 
 Wake recovery in v0.7.8 is available inside the glasses menu. **Start listening** is the first plugin action, directly above **Resume Ring Ask**; it force-rebuilds ring capture and opens the glasses microphone. **Resume Ring Ask** force-rebuilds controls without recording, and returning from the system menu triggers that rebuild automatically.
 

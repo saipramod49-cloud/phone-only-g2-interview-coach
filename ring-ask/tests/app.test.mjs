@@ -1,12 +1,22 @@
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import fs from 'node:fs';
 import ts from 'typescript';
 import * as controller from '../src/controller.mjs';import * as session from '../src/session.mjs';import * as reader from '../src/reader.mjs';
-const live={LiveQuestion:class{ready=false;async start(){return false;}audio(){}configure(){}cancel(){}async finish(){return false;}}};
+let liveConnect=false,liveInstances=[];
+const live={LiveQuestion:class{
+ ready=false;continuous=false;audioBytes=0;
+ constructor(){liveInstances.push(this);}
+ async start(_backend,_token,handler,_options={}){this.handler=handler;this.continuous=_options.continuous===true;this.ready=liveConnect;return this.ready;}
+ audio(chunk){this.audioBytes+=chunk.length;}configure(){}
+ cancel(){this.ready=false;this.continuous=false;}
+ emit(event){this.handler?.(event);}
+ async finish(){return false;}
+}};
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function element(){return {value:'',textContent:'',disabled:false,open:false,checked:false,children:[],style:{},classList:{toggle(){}},replaceChildren(){this.children=[];},append(n){this.children.push(n);},setPointerCapture(){}};}
-async function app(mode='tap',prior){
+async function app(mode='tap',prior,options={}){
+ liveConnect=options.live===true;liveInstances=[];
  const ids=new Map([...fs.readFileSync(new URL('../index.html',import.meta.url),'utf8').matchAll(/id="([^"]+)"/g)].map(m=>[m[1],element()]));
- const storage=new Map([['ring-ask-settings',JSON.stringify({token:'test',backend:'https://test.invalid',listenMode:mode,reading:{font:'native',rows:10,words:'auto'}})],['ring-ask-history',JSON.stringify([{question:'Old question?',answer:'Old answer kept safe.',time:1}])]]);
+ const storage=new Map([['ring-ask-settings',JSON.stringify({token:'test',backend:'https://test.invalid',listenMode:mode,conversationMode:options.conversationMode||'manual',reading:{font:'native',rows:10,words:'auto'}})],['ring-ask-history',JSON.stringify([{question:'Old question?',answer:'Old answer kept safe.',time:1}])]]);
  if(prior){storage.delete('ring-ask-history');storage.set('ring-ask-answer',JSON.stringify(prior));}
  const mic=[],requests=[],pages=[],timeouts=new Set(),intervals=new Set();let eventHandler;
  const bridge={audioControl:async on=>{mic.push(on);return true;},onEvenHubEvent:f=>eventHandler=f,onDeviceStatusChanged(){},getLocalStorage:async()=>'',setLocalStorage:async()=>true,createStartUpPageContainer:async p=>{pages.push(p);return 0;},rebuildPageContainer:async p=>{pages.push(p);return true;},textContainerUpgrade:async()=>true};
@@ -28,7 +38,7 @@ async function app(mode='tap',prior){
   }});
  vm.runInContext(ts.transpileModule(fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context);
  await delay(30);
- return {ids,storage,mic,requests,pages,event:e=>eventHandler(e),dispose(){for(const t of timeouts)clearTimeout(t);for(const t of intervals)clearInterval(t);}};
+ return {ids,storage,mic,requests,pages,live:liveInstances.at(-1),event:e=>eventHandler(e),dispose(){for(const t of timeouts)clearTimeout(t);for(const t of intervals)clearInterval(t);}};
 }
 test('app bridge omitted-zero tap starts, second tap submits, old answer remains during capture',async()=>{
  const a=await app();try{
@@ -132,4 +142,22 @@ test('app migration drops old startup text but restores completed question answe
    assert.ok(!a.ids.get('display').children.map(n=>n.textContent).join('').includes('Double-tap to finish'));
   }finally{a.dispose();}
  }
+});
+
+test('auto conversation starts once, keeps the microphone open across answers, and stops explicitly',async()=>{
+ const a=await app('tap',undefined,{conversationMode:'auto',live:true});try{
+  assert.equal(a.ids.get('start').textContent,'Start Auto Conversation');
+  a.ids.get('start').onclick();await delay(20);
+  assert.deepEqual(a.mic,[true]);assert.equal(a.live.continuous,true);
+  a.event({audioEvent:{audioPcm:new Uint8Array(3200)}});assert.equal(a.live.audioBytes,3200);
+  a.live.emit({type:'transcript',text:'How would you handle Kafka lag?'});
+  a.live.emit({type:'delta',text:'I would first check consumer lag and partition balance.'});
+  a.live.emit({type:'done',model:'test'});
+  a.live.emit({type:'capture',active:true});await delay(10);
+  assert.deepEqual(a.mic,[true]);
+  assert.equal(JSON.parse(a.storage.get('ring-ask-history')).length,2);
+  assert.match(a.ids.get('status').textContent,/Auto listening/);
+  a.ids.get('stop').onclick();await delay(10);
+  assert.deepEqual(a.mic,[true,false]);assert.equal(a.live.continuous,false);
+ }finally{a.dispose();liveConnect=false;}
 });

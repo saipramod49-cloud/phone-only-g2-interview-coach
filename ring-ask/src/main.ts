@@ -7,7 +7,7 @@ import {BitmapDisplay,imageContainers,measureFont} from './bitmap';
 import './style.css';
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
 const backend=el<HTMLInputElement>('backend'),token=el<HTMLInputElement>('token');
-let reading=readingSettings(),listenMode='tap',answerLayout='top',answerInstructions='',keepInstructions=false;
+let reading=readingSettings(),listenMode='tap',conversationMode='manual',answerLayout='top',answerInstructions='',keepInstructions=false;
 let bridge:EvenAppBridge|undefined,screenReady=false,created=false,active=true,backgrounded=false,connecting=false,touched=false;
 let displayBlanked=false;
 let recoveryAttempts=0,status='Ready',recordStarted=0,lastAudioAt=0,inputCount=0;
@@ -15,13 +15,14 @@ let layoutDirty=false,painting=false,dirty=false,lastPaint='',checking=false,api
 let paintTimer:ReturnType<typeof setTimeout>|undefined,recovering:ReturnType<typeof setTimeout>|undefined;
 let abort:AbortController|undefined,retryAudio:Uint8Array|undefined,requestSerial=0;
 let draft:{question:string,answer:string}|undefined,showDraft=false;
+let autoActive=false,autoStarted=0,autoFirst=0;
 const bitmap=new BitmapDisplay();
 function restore(raw:any){
  backend.value=raw.backend||backend.value;token.value=raw.token||'';reading=readingSettings(raw.reading);
- listenMode=raw.listenMode==='hold'?'hold':'tap';answerLayout=raw.answerLayout==='side'?'side':'top';
+ listenMode=raw.listenMode==='hold'?'hold':'tap';conversationMode=raw.conversationMode==='auto'?'auto':'manual';answerLayout=raw.answerLayout==='side'?'side':'top';
  answerInstructions=raw.answerInstructions||'';keepInstructions=!!raw.keepInstructions;
  for(const id of ['font','rows','words','width','x','y'] as const)el<HTMLInputElement>(id).value=String(reading[id]);
- el<HTMLSelectElement>('listen-mode').value=listenMode;el<HTMLSelectElement>('answer-layout').value=answerLayout;
+ el<HTMLSelectElement>('listen-mode').value=listenMode;el<HTMLSelectElement>('conversation-mode').value=conversationMode;el<HTMLSelectElement>('answer-layout').value=answerLayout;
  el<HTMLTextAreaElement>('answer-instructions').value=answerInstructions;el<HTMLInputElement>('keep-instructions').checked=keepInstructions;
 }
 let saved=[];
@@ -44,7 +45,7 @@ const recorder=new Recorder(async(on:boolean)=>{
   status='Connecting GPT Live…';render();
   const connected=await liveQuestion.start(backend.value.trim().replace(/\/$/,''),token.value.trim(),(event:any)=>{
    if(event.type==='transcript.partial'&&event.text){draft={question:event.text,answer:''};status='Listening · live transcript';render();}
-   if(event.type==='capture'&&event.active===false&&recorder.state==='listening')void recorder.dispatch(3);
+   if(event.type==='capture'&&event.active===false&&!autoActive&&recorder.state==='listening')void recorder.dispatch(3);
    if(event.type==='error'){status='GPT Live unavailable · batch fallback ready';render();}
   });
   if(connected)liveQuestion.configure(answerInstructions.trim());
@@ -54,15 +55,64 @@ const recorder=new Recorder(async(on:boolean)=>{
  cancel:()=>liveQuestion.cancel()
 });
 recorder.mode=listenMode;
+
+function consumeAuto(event:any){
+ if(!autoActive)return;
+ if(event.type==='answer.start'){draft={question:event.question||draft?.question||'',answer:''};showDraft=false;autoFirst=0;status='Thinking…';}
+ if(event.type==='transcript.partial'&&event.text){draft={question:event.text,answer:draft?.answer||''};status='Listening · possible question';}
+ if(event.type==='transcript'){draft={question:event.text||draft?.question||'',answer:draft?.answer||''};status='Question detected · thinking…';}
+ if(event.type==='delta'){
+  if(!draft)draft={question:'Question detected',answer:''};
+  if(!autoFirst){autoFirst=performance.now();showDraft=true;history.page=0;el('timing').textContent=`First words ${((autoFirst-autoStarted)/1000).toFixed(1)}s`;}
+  draft.answer+=event.text||'';status='Answer arriving…';
+ }
+ if(event.type==='done'&&draft?.answer){
+  history.add(draft.question,draft.answer);draft=undefined;showDraft=false;history.latest();persist();
+  status='Auto Conversation · listening for the next question';
+  el('timing').textContent=`Last answer complete${event.model?' · '+event.model:''}`;
+ }
+ if(event.type==='capture'&&event.active===true)status='Auto Conversation · listening';
+ if(event.type==='state'&&event.message)status=event.message;
+ if(event.type==='error')status=event.text||'Live session needs attention';
+ render();
+}
+
+async function startAutoConversation(){
+ if(autoActive)return;
+ if(!token.value.trim()){status='Enter your bridge token in Agent connection';render();return;}
+ if(!bridge||!screenReady||backgrounded){status='Glasses reconnecting. Wait for Connected.';render();return;}
+ status='Connecting Auto Conversation…';render();
+ const connected=await liveQuestion.start(
+  backend.value.trim().replace(/\/$/,''),
+  token.value.trim(),
+  consumeAuto,
+  {continuous:true},
+ );
+ if(!connected){status='Could not start GPT-Live Auto Conversation';render();return;}
+ liveQuestion.configure(answerInstructions.trim());
+ try{
+  if(!await deadline(bridge.audioControl(true,AudioInputSource.Glasses),6500,'Microphone timed out.'))throw Error('Microphone unavailable.');
+  autoActive=true;autoStarted=performance.now();lastAudioAt=Date.now();status='Auto Conversation · listening';render();
+ }catch(error){liveQuestion.cancel();status=(error as Error).message;render();}
+}
+
+async function stopAutoConversation(message='Auto Conversation stopped'){
+ if(!autoActive&& !liveQuestion.ready)return;
+ autoActive=false;liveQuestion.cancel();
+ try{await bridge?.audioControl(false,AudioInputSource.Glasses);}catch{}
+ status=message;render();
+}
 const ringInput=new RingInput(dispatch);
 function captureStatus(){
+ if(autoActive){const secs=Math.floor((Date.now()-autoStarted)/1000);return `🐶 Auto listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')} · tap to stop`;}
  if(recorder.state==='listening'){const secs=Math.floor((Date.now()-recordStarted)/1000);return `🐶 Listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')} · ${listenMode==='tap'?'tap to stop':'release to answer'}`;}
  if(['starting','stopping','busy'].includes(recorder.state)||['Sending question…','Transcribing…','Thinking…','Answer arriving…'].includes(status))return '🐶💭 Thinking…';
  if(status==='Ready'||status==='Answer ready')return '🐶 Ready for next question';
  return status;
 }
-function puppyState(){return recorder.state==='listening'?'listening':(['starting','stopping','busy'].includes(recorder.state)||['Sending question…','Transcribing…','Thinking…','Answer arriving…'].includes(status))?'thinking':(status==='Ready'||status==='Answer ready')?'ready':'notice';}
+function puppyState(){return autoActive||recorder.state==='listening'?'listening':(['starting','stopping','busy'].includes(recorder.state)||['Sending question…','Transcribing…','Thinking…','Answer arriving…'].includes(status))?'thinking':(status==='Ready'||status==='Answer ready')?'ready':'notice';}
 function puppyHeader(){
+ if(autoActive)return '🐶 Auto listening';
  if(recorder.state==='listening'){const secs=Math.floor((Date.now()-recordStarted)/1000);return `🐶 Listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`;}
  if(puppyState()==='thinking')return '🐶💭 Thinking';
  if(puppyState()==='ready')return '🐶 Ready';
@@ -84,17 +134,19 @@ function render(){
  el('question').textContent=displayed()?.question||'Ready for your question';el('display').replaceChildren();for(const part of emphasisParts(f.answer)){const node=document.createElement(part.bold?'strong':'span');node.textContent=part.text;el('display').append(node);}
  el('qa-panels').classList.toggle('side',answerLayout==='side');appendRich(el('full-answer'),displayed()?.answer||'');
  el('reading-note').textContent=`${f.rows} answer lines per page. Long questions are shortened on the lens; the complete question is shown on this phone.`;
- el<HTMLButtonElement>('start').textContent=listenMode==='hold'?'Hold to listen':'Tap to '+(['starting','listening'].includes(recorder.state)?'stop & answer':'start listening');
+ el<HTMLButtonElement>('start').textContent=conversationMode==='auto'?(autoActive?'Stop Auto Conversation':'Start Auto Conversation'):(listenMode==='hold'?'Hold to listen':'Tap to '+(['starting','listening'].includes(recorder.state)?'stop & answer':'start listening'));
  el<HTMLButtonElement>('restore-listen').hidden=screenReady&&active&&!backgrounded;
- el<HTMLButtonElement>('start').disabled=['busy','stopping'].includes(recorder.state);
- el<HTMLButtonElement>('stop').disabled=!['starting','listening'].includes(recorder.state);
- el<HTMLButtonElement>('listen-mode').disabled=recorder.state!=='ready';
+ el<HTMLButtonElement>('start').disabled=conversationMode==='manual'&&['busy','stopping'].includes(recorder.state);
+ el<HTMLButtonElement>('stop').disabled=conversationMode==='auto'?!autoActive:!['starting','listening'].includes(recorder.state);
+ el<HTMLButtonElement>('stop').textContent=conversationMode==='auto'?'Stop Auto Conversation':'Stop & answer';
+ el<HTMLButtonElement>('listen-mode').disabled=conversationMode==='auto'||recorder.state!=='ready';
+ el<HTMLButtonElement>('conversation-mode').disabled=autoActive||recorder.state!=='ready';
  el<HTMLButtonElement>('up').disabled=history.index<=0;el<HTMLButtonElement>('down').disabled=history.isLatest&&!draft?.answer;
  el<HTMLButtonElement>('previous-page').disabled=f.page===0;el<HTMLButtonElement>('next-page').disabled=f.count<=1;
  el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';
  dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},reading.font==='native'?100:350);
 }
-function ringMenu(){return new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:'Start listening',itemID:1}),new MenuItemProperty({itemName:'Resume Ring Ask',itemID:2}),new MenuItemProperty({itemName:'Previous answer',itemID:3}),new MenuItemProperty({itemName:'Current answer',itemID:4})]});}
+function ringMenu(){return new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:conversationMode==='auto'?(autoActive?'Stop Auto Conversation':'Start Auto Conversation'):'Start listening',itemID:1}),new MenuItemProperty({itemName:'Resume Ring Ask',itemID:2}),new MenuItemProperty({itemName:'Previous answer',itemID:3}),new MenuItemProperty({itemName:'Current answer',itemID:4})]});}
 function pageDefinition(){
  const f=frame(),custom=reading.font!=='native';
  if(displayBlanked)return {containerTotalNum:1,menuObject:ringMenu(),textObject:[new TextContainerProperty({containerID:1,containerName:'blank-input',xPosition:0,yPosition:0,width:576,height:288,paddingLength:0,isEventCapture:1,content:'',zOrderIndex:0})]};
@@ -129,7 +181,7 @@ async function connect(){
  }catch(error){screenReady=false;el('connection').textContent='Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
  finally{connecting=false;if(!screenReady)scheduleRecovery();}
 }
-function suspend(closed=false){backgrounded=true;screenReady=false;if(closed){active=false;created=false;}ringInput.reset();void recorder.dispatch(5);status='Glasses controls paused';el('connection').textContent='Restore controls from phone';persist();render();}
+function suspend(closed=false){backgrounded=true;screenReady=false;if(closed){active=false;created=false;}ringInput.reset();if(autoActive)void stopAutoConversation('Glasses controls paused');else void recorder.dispatch(5);status='Glasses controls paused';el('connection').textContent='Restore controls from phone';persist();render();}
 function resume(){active=true;backgrounded=false;recoveryAttempts=0;if(!screenReady)void connect();render();}
 async function restoreLensControls(startListening=false){
  if(startListening&&['busy','stopping'].includes(recorder.state))return;
@@ -137,9 +189,13 @@ async function restoreLensControls(startListening=false){
  status=startListening?'Restoring controls & microphone…':'Restoring glasses controls…';
  active=true;backgrounded=false;recoveryAttempts=0;screenReady=false;ringInput.reset();lastPaint='';
  if(startListening||['starting','listening','stopping'].includes(recorder.state))await recorder.dispatch(5);
+ if(autoActive)await stopAutoConversation('Restoring glasses controls…');
  await connect();
  if(!screenReady){status='Could not restore glasses controls. Open this lens menu and try again.';render();return;}
- if(startListening){recorder.mode=listenMode;await recorder.dispatch(listenMode==='hold'?9:0);}
+ if(startListening){
+  if(conversationMode==='auto')await startAutoConversation();
+  else{recorder.mode=listenMode;await recorder.dispatch(listenMode==='hold'?9:0);}
+ }
  else{status='Ready';render();}
 }
 async function recoverFromInput(types:number[]){
@@ -154,7 +210,7 @@ async function restoreAndListen(){
 }
 function subscribe(){
  bridge!.onEvenHubEvent(event=>{
-  if(event.audioEvent){lastAudioAt=Date.now();recorder.audio(event.audioEvent.audioPcm);}
+  if(event.audioEvent){lastAudioAt=Date.now();if(autoActive)liveQuestion.audio(event.audioEvent.audioPcm);else recorder.audio(event.audioEvent.audioPcm);}
   const menu=event.menuItemClickEvent?.itemID;if(menu){
    if(menu===1){void restoreLensControls(true);return;}
    if(menu===2){void restoreLensControls(false);return;}
@@ -168,7 +224,7 @@ function subscribe(){
   if(types.length&&(!active||backgrounded||!screenReady)){void recoverFromInput(types);return;}
   for(const type of types){el('input-status').textContent=`Input ${++inputCount}: ${type} · ${recorder.state}`;ringInput.feed(type);}
  });
- bridge!.onDeviceStatusChanged(device=>{if(device.isDisconnected()||device.isConnectionFailed()){screenReady=false;ringInput.reset();void recorder.dispatch(5);scheduleRecovery();}else if(device.isConnected())resume();});
+ bridge!.onDeviceStatusChanged(device=>{if(device.isDisconnected()||device.isConnectionFailed()){screenReady=false;ringInput.reset();if(autoActive)void stopAutoConversation('Glasses disconnected');else void recorder.dispatch(5);scheduleRecovery();}else if(device.isConnected())resume();});
 }
 function navigatePage(direction:number){const f=frame();history.page=direction>0?(f.page+1)%f.count:Math.max(0,f.page-1);render();}
 function toggleLensDisplay(){displayBlanked=!displayBlanked;layoutDirty=true;status=displayBlanked?'Lens blanked · triple tap to restore':'Ready';render();}
@@ -181,6 +237,10 @@ function navigateHistory(direction:number){
 function dispatch(type:number){
  if(!active||backgrounded)return;
  if(type===3){navigatePage(1);return;}if(type===11){toggleLensDisplay();return;}if(type===1||type===2){navigateHistory(type===1?-1:1);return;}
+ if(conversationMode==='auto'){
+  if(type===0||type===9){if(autoActive)void stopAutoConversation();else void startAutoConversation();}
+  return;
+ }
  if(type===10){if(listenMode==='hold')void recorder.dispatch(10);return;}
  if((listenMode==='tap'&&type!==0)||(listenMode==='hold'&&type!==9))return;
  if(['busy','stopping'].includes(recorder.state))return;
@@ -188,7 +248,7 @@ function dispatch(type:number){
  if(!screenReady){status='Reconnecting · try again when Connected';void connect();render();return;}
  recorder.mode=listenMode;void recorder.dispatch(type);
 }
-function cancel(){requestSerial++;abort?.abort();draft=undefined;showDraft=false;ringInput.reset();void recorder.dispatch(5);persist();render();}
+function cancel(){requestSerial++;abort?.abort();draft=undefined;showDraft=false;ringInput.reset();if(autoActive||liveQuestion.continuous)void stopAutoConversation('Auto Conversation cancelled');else void recorder.dispatch(5);persist();render();}
 async function submit(pcm:Uint8Array){
  retryAudio=pcm;abort?.abort();const current=new AbortController();abort=current;const serial=++requestSerial;
  const timeout=setTimeout(()=>current.abort(),195000),start=performance.now();let first=0,done=false;
@@ -234,7 +294,7 @@ async function submit(pcm:Uint8Array){
  finally{clearTimeout(timeout);if(abort===current)abort=undefined;}
 }
 async function saveSettings(){
- const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading,listenMode,answerLayout,answerInstructions,keepInstructions});
+ const raw=JSON.stringify({backend:backend.value.trim().replace(/\/$/,''),token:token.value.trim(),reading,listenMode,conversationMode,answerLayout,answerInstructions,keepInstructions});
  try{localStorage.setItem('ring-ask-settings',raw);}catch{}
  if(bridge)try{await deadline(bridge.setLocalStorage('ring-ask-settings',raw),2500);}catch{}
 }
@@ -249,13 +309,13 @@ async function checkConnection(save:boolean){
  }catch(error){apiReady=false;el('health').textContent=(error as Error).message;}finally{clearTimeout(timer);checking=false;el<HTMLButtonElement>('save').disabled=false;}
 }
 let recoveryPress=false;
-el('start').onpointerdown=event=>{if(listenMode==='hold'){el('start').setPointerCapture(event.pointerId);if(!active||backgrounded||!screenReady){recoveryPress=true;void restoreAndListen();}else dispatch(9);}};
-el('start').onpointerup=()=>{if(listenMode==='hold'){if(recoveryPress){recoveryPress=false;return;}dispatch(10);}};
-el('start').onclick=()=>{if(listenMode==='tap'){if(!active||backgrounded||!screenReady)void restoreAndListen();else dispatch(0);}};
+el('start').onpointerdown=event=>{if(conversationMode==='manual'&&listenMode==='hold'){el('start').setPointerCapture(event.pointerId);if(!active||backgrounded||!screenReady){recoveryPress=true;void restoreAndListen();}else dispatch(9);}};
+el('start').onpointerup=()=>{if(conversationMode==='manual'&&listenMode==='hold'){if(recoveryPress){recoveryPress=false;return;}dispatch(10);}};
+el('start').onclick=()=>{if(conversationMode==='auto'||listenMode==='tap'){if(!active||backgrounded||!screenReady)void restoreAndListen();else dispatch(0);}};
 el('start').onpointercancel=cancel;
 el('start').onkeydown=e=>{if(listenMode==='hold'&&[' ','Enter'].includes(e.key)&&!e.repeat){e.preventDefault();dispatch(9);}};
 el('start').onkeyup=e=>{if(listenMode==='hold'&&[' ','Enter'].includes(e.key)){e.preventDefault();dispatch(10);}};
-el('stop').onclick=()=>{ringInput.reset();void recorder.dispatch(3);};el('cancel').onclick=cancel;
+el('stop').onclick=()=>{ringInput.reset();if(autoActive)void stopAutoConversation();else void recorder.dispatch(3);};el('cancel').onclick=cancel;
 el('restore-listen').onclick=()=>{void restoreAndListen();};
 el('up').onclick=()=>navigateHistory(-1);el('down').onclick=()=>navigateHistory(1);
 el('next-page').onclick=()=>navigatePage(1);el('previous-page').onclick=()=>navigatePage(-1);
@@ -263,7 +323,8 @@ el('retry').onclick=()=>{if(retryAudio&&recorder.state==='ready'){recorder.state
 el('save').onclick=()=>{touched=true;void checkConnection(true);};
 for(const input of [backend,token])input.oninput=()=>{touched=true;};
 el('reconnect').onclick=()=>{resume();void checkConnection(false);};
-el('exit').onclick=async()=>{cancel();active=false;await bridge?.shutDownPageContainer(1);};
+el('exit').onclick=async()=>{if(autoActive)await stopAutoConversation();else cancel();active=false;await bridge?.shutDownPageContainer(1);};
+el<HTMLSelectElement>('conversation-mode').onchange=()=>{touched=true;conversationMode=el<HTMLSelectElement>('conversation-mode').value==='auto'?'auto':'manual';ringInput.reset();void saveSettings();layoutDirty=true;render();};
 el<HTMLSelectElement>('listen-mode').onchange=()=>{touched=true;ringInput.reset();listenMode=el<HTMLSelectElement>('listen-mode').value;recorder.mode=listenMode;void saveSettings();render();};
 el<HTMLSelectElement>('answer-layout').onchange=()=>{touched=true;answerLayout=el<HTMLSelectElement>('answer-layout').value;layoutDirty=true;history.page=0;void saveSettings();render();};
 for(const id of ['font','rows','words','width','x','y'])el<HTMLInputElement>(id).onchange=()=>{touched=true;reading=readingSettings(Object.fromEntries(['font','rows','words','width','x','y'].map(key=>[key,el<HTMLInputElement>(key).value])));layoutDirty=true;history.page=0;void saveSettings();render();};
@@ -273,5 +334,9 @@ el('demo').onclick=()=>{history.add('How would you move website events into GCS 
 window.addEventListener('online',resume);window.addEventListener('pageshow',resume);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();else persist();});
 window.addEventListener('pagehide',()=>{cancel();persist();});
-setInterval(()=>{if(recorder.state==='listening'){if(Date.now()-lastAudioAt>10000){void recorder.dispatch(5);status='Audio stopped · previous answer preserved';screenReady=false;scheduleRecovery();}render();}},1000);
+setInterval(()=>{
+ if(autoActive&&Date.now()-lastAudioAt>10000){void stopAutoConversation('Audio stopped · Auto Conversation ended');screenReady=false;scheduleRecovery();}
+ else if(recorder.state==='listening'&&Date.now()-lastAudioAt>10000){void recorder.dispatch(5);status='Audio stopped · previous answer preserved';screenReady=false;scheduleRecovery();}
+ if(autoActive||recorder.state==='listening')render();
+},1000);
 render();void connect();if(token.value)void checkConnection(false);
