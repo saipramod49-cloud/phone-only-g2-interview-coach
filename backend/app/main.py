@@ -2049,3 +2049,6 @@ app.include_router(ring_live_router)
 
 from .ring_ask import router as ring_ask_router
 app.include_router(ring_ask_router)
+
+from .remote_captions import router as remote_captions_router
+app.include_router(remote_captions_router)

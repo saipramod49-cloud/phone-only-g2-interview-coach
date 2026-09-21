@@ -1,4 +1,4 @@
-# Ring Ask v0.10.0 Interview Packs
+# Ring Ask v0.11.0 Remote Captions
 
 Open [Ring Ask in Even Hub](https://hub.evenrealities.com/landing?package_id=com.saipramod.ringask), the [live Render app](https://phone-only-g2-interview-coach-fawf.onrender.com/ring/), or the [GitHub source](https://github.com/saipramod49-cloud/phone-only-g2-interview-coach).
 
@@ -21,6 +21,8 @@ Every answer page has a question and page/history status. Choose question above/
 There is one answer style, adapted to the request: readable conversational paragraphs, a matching flow for architecture where useful, and actual SQL/Python/PySpark code first when requested. Follow-ups retain conversation context. Resume and prep notes guide relevant answers without limiting help on unfamiliar stacks. Proposed experience uses conditional language rather than invented personal claims. The next-answer instruction box can refine answers without a deployment.
 
 The GPT-Live backend model is configured on Render with `OPENAI_LIVE_BACKEND_MODEL`; the question-at-a-time fallback uses `RING_MODEL` or `OPENAI_MODEL`. The authenticated `/api/health` reports the deployed model, prompt style, version, and recording limit. Measured latency varies with model service, network, audio quality, and glasses rendering.
+
+v0.11.0 adds Remote Captions. Start it in Ring Ask to receive an expiring eight-character code and sender link. A second phone anywhere with internet access opens that link, confirms participant consent, and streams its microphone as PCM16 audio through Render to OpenAI's low-delay `gpt-live-transcribe` session. Partial and final captions are relayed to the Ring Ask phone and lenses. A session accepts one sender, expires after one hour by default, and keeps only a bounded in-memory caption window; Ring Ask does not intentionally record audio or persist the remote transcript. This initial version provides captions, not interview-answer generation from the remote feed.
 
 v0.10.0 puts Interview Packs directly in the Ring Ask phone UI. Create one pack per role, paste its JD, upload a PDF/DOCX/TXT resume or project material, add quick prep notes, and switch the active pack without leaving the app. The active JD chooses the target cloud stack (Azure, GCP, or AWS) while resume projects retain their historical technology. Personal claims remain grounded in uploaded facts; when no exact incident exists, Ring Ask gives a useful profile-consistent hypothetical approach instead of inventing employment history. Pack changes refresh the running GPT-Live delegation session.
 

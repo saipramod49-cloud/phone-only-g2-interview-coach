@@ -2,7 +2,7 @@
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Ring Ask</title></head>
 <body><main id="phone-scroll">
-  <header><span class="eyebrow">RING ASK · v0.10.0 INTERVIEW PACKS</span><span id="connection">Connecting glasses…</span></header>
+  <header><span class="eyebrow">RING ASK · v0.11.0 REMOTE CAPTIONS</span><span id="connection">Connecting glasses…</span></header>
   <h1>Start once. Stay present.</h1>
   <p>Auto Conversation keeps one GPT-Live session listening until you stop it, detects questions directed to you, and streams profile-grounded answers. Use only in mock interviews or conversations where recording and AI assistance are permitted.</p>
   <nav class="quick-links" aria-label="Ring Ask links">
@@ -19,6 +19,12 @@
   <p id="timing" role="status"></p>
   <div class="controls"><button id="start">Press and hold to speak</button><button id="stop">Stop & answer</button><button id="cancel">Cancel</button></div>
   <button id="restore-listen" class="restore-listen">Restore glasses controls & start listening</button>
+  <details id="remote-captions"><summary>Remote Captions · another phone anywhere</summary>
+    <p>Start a private one-hour session, then open the sender link on the phone near the conversation. Its live speech appears on this phone and the glasses. The remote sender must confirm everyone’s consent.</p>
+    <button id="remote-toggle">Start remote captions</button>
+    <div class="remote-session"><span>Session code</span><strong id="remote-code">No active session</strong></div>
+    <a id="remote-link" class="primary-link remote-link" hidden target="_blank" rel="noopener">Open or share sender page</a>
+  </details>
   <div class="controls secondary"><button id="up">↑ Previous answer</button><button id="down">Newer answer ↓</button></div>
   <div class="controls secondary"><button id="previous-page">Previous page</button><button id="next-page">Next page · double tap</button></div>
   <details id="interview-pack"><summary>Interview Pack · resume, JD & prep notes</summary>

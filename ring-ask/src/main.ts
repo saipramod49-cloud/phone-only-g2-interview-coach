@@ -1,6 +1,7 @@
 import {waitForEvenAppBridge,CreateStartUpPageContainer,RebuildPageContainer,MenuContainerProperty,MenuItemProperty,TextContainerProperty,TextContainerUpgrade,AudioInputSource,type EvenAppBridge} from '@evenrealities/even_hub_sdk';
 import {Recorder,gestures,recoveryDelay} from './controller.mjs';
 import {LiveQuestion} from './live.mjs';
+import {RemoteCaptions} from './remote.mjs';
 import {InterviewPackClient,activeProfile,targetStack} from './preparation.mjs';
 import {readingSettings,deadline,textWidth,emphasisParts} from './reader.mjs';
 import {AnswerHistory,RingInput,readingFrame} from './session.mjs';
@@ -17,6 +18,7 @@ let paintTimer:ReturnType<typeof setTimeout>|undefined,recovering:ReturnType<typ
 let abort:AbortController|undefined,retryAudio:Uint8Array|undefined,requestSerial=0;
 let draft:{question:string,answer:string}|undefined,showDraft=false;
 let autoActive=false,autoStarted=0,autoFirst=0;
+let remoteActive=false,remoteCode='',remoteSenderUrl='';
 let packState:any=null,packLoading=false;
 const bitmap=new BitmapDisplay();
 function restore(raw:any){
@@ -34,6 +36,7 @@ catch{restore({});}
 const history=new AnswerHistory(saved);
 function persist(){try{localStorage.setItem('ring-ask-history',JSON.stringify(history.entries));}catch{el('hint').textContent='Phone storage is full; history is kept for this session only.';}}
 const liveQuestion=new LiveQuestion();
+const remoteCaptions=new RemoteCaptions();
 function packClient(){return new InterviewPackClient(backend.value.trim(),token.value.trim());}
 function refreshLiveDossier(){if(liveQuestion.ready)liveQuestion.configure(answerInstructions.trim());}
 function renderPack(){
@@ -125,8 +128,33 @@ async function stopAutoConversation(message='Auto Conversation stopped'){
  try{await bridge?.audioControl(false,AudioInputSource.Glasses);}catch{}
  status=message;render();
 }
+function consumeRemote(event:any){
+ if(event.type==='session'){remoteCode=event.code||'';remoteSenderUrl=event.sender_url||'';status='Remote captions · share the code';}
+ if(event.type==='sender.connected')status='Remote captions · sender connected';
+ if((event.type==='caption.partial'||event.type==='caption.final')&&event.text){draft={question:'REMOTE CAPTIONS',answer:event.text};showDraft=true;history.page=0;status='Remote captions · live';}
+ if(event.type==='sender.disconnected')status='Remote captions · waiting for sender';
+ if(event.type==='expired')stopRemoteCaptions('Remote caption session expired');
+ if(event.type==='error')status=event.text||'Remote captions stopped';
+ if(event.type==='closed'&&remoteActive)stopRemoteCaptions(event.text||'Remote captions stopped');
+ render();
+}
+async function startRemoteCaptions(){
+ if(remoteActive){stopRemoteCaptions();return;}
+ if(!token.value.trim()){status='Enter your bridge token in Agent connection';render();return;}
+ if(autoActive)await stopAutoConversation('Switching to remote captions…');else await recorder.dispatch(5);
+ status='Creating remote caption session…';render();
+ const connected=await remoteCaptions.start(backend.value.trim().replace(/\/$/,''),token.value.trim(),consumeRemote);
+ if(!connected){status='Could not create remote caption session';render();return;}
+ remoteActive=true;status='Remote captions · share the code';layoutDirty=true;render();
+}
+function stopRemoteCaptions(message='Remote captions stopped'){
+ remoteActive=false;remoteCaptions.stop();remoteCode='';remoteSenderUrl='';
+ if(draft?.question==='REMOTE CAPTIONS'){draft=undefined;showDraft=false;history.latest();}
+ status=message;layoutDirty=true;render();
+}
 const ringInput=new RingInput(dispatch);
 function captureStatus(){
+ if(remoteActive)return remoteCode?`Remote captions · ${remoteCode}`:'Remote captions · connecting';
  if(autoActive){const secs=Math.floor((Date.now()-autoStarted)/1000);return `🐶 Auto listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')} · tap to stop`;}
  if(recorder.state==='listening'){const secs=Math.floor((Date.now()-recordStarted)/1000);return `🐶 Listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')} · ${listenMode==='tap'?'tap to stop':'release to answer'}`;}
  if(['starting','stopping','busy'].includes(recorder.state)||['Sending question…','Transcribing…','Thinking…','Answer arriving…'].includes(status))return '🐶💭 Thinking…';
@@ -135,6 +163,7 @@ function captureStatus(){
 }
 function puppyState(){return autoActive||recorder.state==='listening'?'listening':(['starting','stopping','busy'].includes(recorder.state)||['Sending question…','Transcribing…','Thinking…','Answer arriving…'].includes(status))?'thinking':(status==='Ready'||status==='Answer ready')?'ready':'notice';}
 function puppyHeader(){
+ if(remoteActive)return remoteCode?`Remote · ${remoteCode}`:'Remote captions';
  if(autoActive)return '🐶 Auto listening';
  if(recorder.state==='listening'){const secs=Math.floor((Date.now()-recordStarted)/1000);return `🐶 Listening ${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`;}
  if(puppyState()==='thinking')return '🐶💭 Thinking';
@@ -167,9 +196,12 @@ function render(){
  el<HTMLButtonElement>('up').disabled=history.index<=0;el<HTMLButtonElement>('down').disabled=history.isLatest&&!draft?.answer;
  el<HTMLButtonElement>('previous-page').disabled=f.page===0;el<HTMLButtonElement>('next-page').disabled=f.count<=1;
  el<HTMLButtonElement>('retry').disabled=!retryAudio||recorder.state!=='ready';
+ el<HTMLButtonElement>('remote-toggle').textContent=remoteActive?'Stop remote captions':'Start remote captions';
+ el('remote-code').textContent=remoteCode||'No active session';
+ const remoteLink=el<HTMLAnchorElement>('remote-link');remoteLink.hidden=!remoteSenderUrl;remoteLink.href=remoteSenderUrl;
  dirty=true;if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=undefined;void paint();},reading.font==='native'?100:350);
 }
-function ringMenu(){return new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:conversationMode==='auto'?(autoActive?'Stop Auto Conversation':'Start Auto Conversation'):'Start listening',itemID:1}),new MenuItemProperty({itemName:'Resume Ring Ask',itemID:2}),new MenuItemProperty({itemName:'Previous answer',itemID:3}),new MenuItemProperty({itemName:'Current answer',itemID:4})]});}
+function ringMenu(){return new MenuContainerProperty({menuItems:[new MenuItemProperty({itemName:conversationMode==='auto'?(autoActive?'Stop Auto Conversation':'Start Auto Conversation'):'Start listening',itemID:1}),new MenuItemProperty({itemName:'Resume Ring Ask',itemID:2}),new MenuItemProperty({itemName:'Previous answer',itemID:3}),new MenuItemProperty({itemName:'Current answer',itemID:4}),new MenuItemProperty({itemName:remoteActive?'Stop Remote Captions':'Start Remote Captions',itemID:5})]});}
 function pageDefinition(){
  const f=frame(),custom=reading.font!=='native';
  if(displayBlanked)return {containerTotalNum:1,menuObject:ringMenu(),textObject:[new TextContainerProperty({containerID:1,containerName:'blank-input',xPosition:0,yPosition:0,width:576,height:288,paddingLength:0,isEventCapture:1,content:'',zOrderIndex:0})]};
@@ -204,7 +236,7 @@ async function connect(){
  }catch(error){screenReady=false;el('connection').textContent='Glasses reconnecting…';el('hint').textContent=(error as Error).message;}
  finally{connecting=false;if(!screenReady)scheduleRecovery();}
 }
-function suspend(closed=false){backgrounded=true;screenReady=false;if(closed){active=false;created=false;}ringInput.reset();if(autoActive)void stopAutoConversation('Glasses controls paused');else void recorder.dispatch(5);status='Glasses controls paused';el('connection').textContent='Restore controls from phone';persist();render();}
+function suspend(closed=false){backgrounded=true;screenReady=false;if(closed){active=false;created=false;}ringInput.reset();if(remoteActive)stopRemoteCaptions('Remote captions stopped');if(autoActive)void stopAutoConversation('Glasses controls paused');else void recorder.dispatch(5);status='Glasses controls paused';el('connection').textContent='Restore controls from phone';persist();render();}
 function resume(){active=true;backgrounded=false;recoveryAttempts=0;if(!screenReady)void connect();render();}
 async function restoreLensControls(startListening=false){
  if(startListening&&['busy','stopping'].includes(recorder.state))return;
@@ -237,6 +269,7 @@ function subscribe(){
   const menu=event.menuItemClickEvent?.itemID;if(menu){
    if(menu===1){void restoreLensControls(true);return;}
    if(menu===2){void restoreLensControls(false);return;}
+   if(menu===5){resume();void startRemoteCaptions();return;}
    resume();if(menu===3)navigateHistory(-1);if(menu===4){history.latest();showDraft=!!draft?.answer;render();}return;
   }
    const system=event.sysEvent?.eventType;
@@ -271,7 +304,7 @@ function dispatch(type:number){
  if(!screenReady){status='Reconnecting · try again when Connected';void connect();render();return;}
  recorder.mode=listenMode;void recorder.dispatch(type);
 }
-function cancel(){requestSerial++;abort?.abort();draft=undefined;showDraft=false;ringInput.reset();if(autoActive||liveQuestion.continuous)void stopAutoConversation('Auto Conversation cancelled');else void recorder.dispatch(5);persist();render();}
+function cancel(){requestSerial++;abort?.abort();draft=undefined;showDraft=false;ringInput.reset();if(remoteActive)stopRemoteCaptions('Remote captions cancelled');if(autoActive||liveQuestion.continuous)void stopAutoConversation('Auto Conversation cancelled');else void recorder.dispatch(5);persist();render();}
 async function submit(pcm:Uint8Array){
  retryAudio=pcm;abort?.abort();const current=new AbortController();abort=current;const serial=++requestSerial;
  const timeout=setTimeout(()=>current.abort(),195000),start=performance.now();let first=0,done=false;
@@ -346,7 +379,8 @@ el('retry').onclick=()=>{if(retryAudio&&recorder.state==='ready'){recorder.state
 el('save').onclick=()=>{touched=true;void checkConnection(true);};
 for(const input of [backend,token])input.oninput=()=>{touched=true;};
 el('reconnect').onclick=()=>{resume();void checkConnection(false);};
-el('exit').onclick=async()=>{if(autoActive)await stopAutoConversation();else cancel();active=false;await bridge?.shutDownPageContainer(1);};
+el('remote-toggle').onclick=()=>void startRemoteCaptions();
+el('exit').onclick=async()=>{if(remoteActive)stopRemoteCaptions();if(autoActive)await stopAutoConversation();else cancel();active=false;await bridge?.shutDownPageContainer(1);};
 el<HTMLSelectElement>('conversation-mode').onchange=()=>{touched=true;conversationMode=el<HTMLSelectElement>('conversation-mode').value==='auto'?'auto':'manual';ringInput.reset();void saveSettings();layoutDirty=true;render();};
 el<HTMLSelectElement>('listen-mode').onchange=()=>{touched=true;ringInput.reset();listenMode=el<HTMLSelectElement>('listen-mode').value;recorder.mode=listenMode;void saveSettings();render();};
 el<HTMLSelectElement>('answer-layout').onchange=()=>{touched=true;answerLayout=el<HTMLSelectElement>('answer-layout').value;layoutDirty=true;history.page=0;void saveSettings();render();};

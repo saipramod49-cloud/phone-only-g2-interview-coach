@@ -84,7 +84,7 @@ async def health(authorization: str | None = Header(None)):
         "live_model": os.getenv("OPENAI_LIVE_MODEL", "gpt-live-1"),
         "live_transport": os.getenv("OPENAI_LIVE_EXPERIMENT", "0") == "1",
         "reasoning": "delegated",
-        "version": "0.10.0",
+        "version": "0.11.0",
         "max_recording_seconds": 300,
     }
 

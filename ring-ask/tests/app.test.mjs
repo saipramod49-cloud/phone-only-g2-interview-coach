@@ -2,6 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import vm f
 import ts from 'typescript';
 import * as controller from '../src/controller.mjs';import * as session from '../src/session.mjs';import * as reader from '../src/reader.mjs';
 import * as preparation from '../src/preparation.mjs';
+import {RemoteCaptions} from '../src/remote.mjs';
 let liveConnect=false,liveInstances=[];
 const live={LiveQuestion:class{
  ready=false;continuous=false;audioBytes=0;
@@ -34,7 +35,7 @@ async function app(mode='tap',prior,options={}){
     {type:'delta',text:'```sql\nSELECT customer_id\nFROM customers;\n```\n\nKeep the identifiers.'},{type:'done',model:'test'}].map(x=>JSON.stringify(x)).join('\n'));
   },exports:{},require:name=>{
    if(name==='@evenrealities/even_hub_sdk')return sdk;
-   if(name==='./controller.mjs')return controller;if(name==='./session.mjs')return session;if(name==='./reader.mjs')return reader;if(name==='./live.mjs')return live;if(name==='./preparation.mjs')return preparation;
+   if(name==='./controller.mjs')return controller;if(name==='./session.mjs')return session;if(name==='./reader.mjs')return reader;if(name==='./live.mjs')return live;if(name==='./remote.mjs')return {RemoteCaptions};if(name==='./preparation.mjs')return preparation;
    if(name==='./bitmap')return {BitmapDisplay:class{reset(){}async paintFrame(){}},imageContainers:()=>[],measureFont:t=>t.length*10};if(name==='./style.css')return {};throw Error(name);
   }});
  vm.runInContext(ts.transpileModule(fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context);
@@ -99,7 +100,7 @@ test('contextual menu open and close preserve the mounted page and ring controls
 test('lens menu puts Start listening before Resume and both force control recovery',async()=>{
  const a=await app();try{
   const menu=a.pages.at(-1).menuObject.menuItems;
-  assert.equal(menu.map(item=>item.itemName).join('|'),'Start listening|Resume Ring Ask|Previous answer|Current answer');
+  assert.equal(menu.map(item=>item.itemName).join('|'),'Start listening|Resume Ring Ask|Previous answer|Current answer|Start Remote Captions');
   a.event({sysEvent:{eventType:7}});await delay(20);
   const before=a.pages.length;a.event({menuItemClickEvent:{itemID:2}});await delay(80);
   assert.ok(a.pages.length>before);assert.deepEqual(a.mic,[false]);

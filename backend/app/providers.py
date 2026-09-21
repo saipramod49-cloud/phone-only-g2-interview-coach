@@ -535,6 +535,55 @@ async def openai_transcription_session():
         raise
 
 
+async def openai_caption_session():
+    """Open a low-latency, transcription-only Realtime session for remote captions."""
+    key = os.environ["OPENAI_API_KEY"]
+    ws = await websockets.connect(
+        "wss://api.openai.com/v1/realtime?model=gpt-realtime",
+        additional_headers={"Authorization": f"Bearer {key}"},
+        ping_interval=10,
+        ping_timeout=10,
+        close_timeout=5,
+        max_size=2**20,
+    )
+    update = {
+        "type": "session.update",
+        "session": {
+            "type": "transcription",
+            "audio": {
+                "input": {
+                    "format": {"type": "audio/pcm", "rate": 24000},
+                    "transcription": {
+                        "model": os.getenv("OPENAI_REMOTE_TRANSCRIPTION_MODEL", "gpt-live-transcribe"),
+                        "prompt": "Transcribe the live conversation accurately. Preserve technical product, cloud, data engineering, and software terms.",
+                        "languages": ["en"],
+                        "delay": "low",
+                    },
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.50,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 350,
+                    },
+                }
+            },
+        },
+    }
+    try:
+        await ws.send(json.dumps(update))
+        async with asyncio.timeout(15):
+            async for raw in ws:
+                event = json.loads(raw)
+                if event.get("type") == "session.updated":
+                    return ws
+                if event.get("type") == "error":
+                    raise RuntimeError("OpenAI rejected remote caption configuration")
+            raise RuntimeError("OpenAI remote caption connection closed")
+    except BaseException:
+        await ws.close()
+        raise
+
+
 
 async def align_candidate_speech(spoken: str, answer: str) -> str | None:
     """Return an exact, unique answer quote or abstain. No identity inference."""
